@@ -259,20 +259,18 @@ app.get('/api/student/bookings', verifyToken, async (req, res) => {
 // --- 9. Get Platform Statistics (Real-Time from DB) ---
 app.get('/api/stats', async (req, res) => {
   try {
-    const [studentRows] = await db.query('SELECT COUNT(*) AS count FROM users WHERE role = "student"');
+    const [studentRows] = await db.query('SELECT COUNT(*) AS count FROM users WHERE LOWER(role) = "student"');
     const [classRows] = await db.query('SELECT COUNT(*) AS count FROM live_classes');
-    const [teacherRows] = await db.query('SELECT COUNT(*) AS count FROM users WHERE role = "teacher"');
+    const [teacherRows] = await db.query('SELECT COUNT(*) AS count FROM users WHERE LOWER(role) = "teacher"');
 
-    const totalStudents = studentRows[0]?.count || 0;
-    const totalClasses = classRows[0]?.count || 0;
-    const totalTeachers = teacherRows[0]?.count || 0;
+    const statsData = {
+      students: parseInt(studentRows[0]?.count, 10) || 0,
+      classes: parseInt(classRows[0]?.count, 10) || 0,
+      teachers: parseInt(teacherRows[0]?.count, 10) || 0
+    };
 
-    res.json({
-      students: totalStudents,
-      classes: totalClasses,
-      teachers: totalTeachers,
-      hoursWatched: totalClasses * 2
-    });
+    console.log('Stats fetched from DB:', statsData);
+    res.json(statsData);
   } catch (error) {
     console.error('Stats error:', error);
     res.status(500).json({ message: 'Internal server error.' });

@@ -29,15 +29,16 @@ export default function HomeCatalog() {
     fetch(`${API_URL}/api/stats`)
       .then(res => res.json())
       .then(data => { 
+        console.log('Stats received in frontend:', data);
         if (data) {
           setStats({
-            students: data.students ?? data.totalStudents ?? 0,
-            classes: data.classes ?? data.totalClasses ?? 0,
-            teachers: data.teachers ?? data.totalTeachers ?? 0
+            students: Number(data.students) || 0,
+            classes: Number(data.classes) || 0,
+            teachers: Number(data.teachers) || 0
           }); 
         }
       })
-      .catch(err => console.error(err));
+      .catch(err => console.error('Stats fetch error:', err));
   }, []);
 
   const handleBook = async (classId, e) => {
@@ -170,17 +171,17 @@ export default function HomeCatalog() {
             <div className="max-w-5xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
               <div className="space-y-1">
                 <div className="flex justify-center text-red-600 mb-2"><Users className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{stats.students ?? 0}</h3>
+                <h3 className="text-3xl font-black text-slate-900">{stats.students}</h3>
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Registered Students</p>
               </div>
               <div className="space-y-1">
                 <div className="flex justify-center text-red-600 mb-2"><BookOpen className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{stats.classes ?? 0}</h3>
+                <h3 className="text-3xl font-black text-slate-900">{stats.classes}</h3>
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Scheduled Classes</p>
               </div>
               <div className="space-y-1">
                 <div className="flex justify-center text-red-600 mb-2"><Award className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{stats.teachers ?? 0}</h3>
+                <h3 className="text-3xl font-black text-slate-900">{stats.teachers}</h3>
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Expert Lecturers</p>
               </div>
             </div>

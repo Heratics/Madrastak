@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Search, User, BookOpen, Video, Award, Users, Star, Clock, GraduationCap, Filter } from 'lucide-react';
+import { Search, User, BookOpen, Video, Award, Users, Star, Clock, GraduationCap, CheckCircle, AlertCircle, X } from 'lucide-react';
 import { API_URL } from '../config';
 
 export default function HomeCatalog() {
@@ -11,6 +11,12 @@ export default function HomeCatalog() {
   const [stats, setStats] = useState({ students: 0, classes: 0, teachers: 0, hoursWatched: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('home'); // 'home' or 'courses'
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 4000);
+  };
 
   useEffect(() => {
     // Fetch live classes
@@ -26,7 +32,8 @@ export default function HomeCatalog() {
       .catch(err => console.error(err));
   }, []);
 
-  const handleBook = async (classId) => {
+  const handleBook = async (classId, e) => {
+    e.stopPropagation(); // Prevents card click from triggering navigation
     if (!user) {
       navigate('/login');
       return;
@@ -43,9 +50,9 @@ export default function HomeCatalog() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      alert('Successfully booked seat!');
+      showToast('Successfully booked seat!');
     } catch (err) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
@@ -63,7 +70,17 @@ export default function HomeCatalog() {
   );
 
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="min-h-screen bg-white text-slate-900 relative">
+      {/* Custom Toast Popup */}
+      {toast.show && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-4 rounded-2xl shadow-xl text-white text-sm font-medium transition animate-bounce ${
+          toast.type === 'error' ? 'bg-red-600' : 'bg-slate-900'
+        }`}>
+          {toast.type === 'error' ? <AlertCircle className="w-5 h-5" /> : <CheckCircle className="w-5 h-5 text-emerald-400" />}
+          <span>{toast.message}</span>
+        </div>
+      )}
+
       {/* Top Navbar */}
       <header className="border-b border-slate-100 sticky top-0 bg-white/80 backdrop-blur-md z-50">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
@@ -180,7 +197,11 @@ export default function HomeCatalog() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {filteredClasses.slice(0, 3).map((cls) => (
-                <div key={cls.id} className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-lg shadow-slate-100 hover:shadow-xl transition flex flex-col justify-between group">
+                <div 
+                  key={cls.id} 
+                  onClick={() => navigate(`/course/${cls.id}`)}
+                  className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-lg shadow-slate-100 hover:shadow-xl transition flex flex-col justify-between group cursor-pointer"
+                >
                   <div>
                     <div className="h-48 bg-slate-900 relative overflow-hidden flex items-center justify-center text-white">
                       <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
@@ -203,7 +224,7 @@ export default function HomeCatalog() {
                   <div className="p-6 pt-0 flex justify-between items-center border-t border-slate-100 mt-4">
                     <span className="text-xs bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg font-medium">{cls.duration_minutes} mins</span>
                     <button 
-                      onClick={() => handleBook(cls.id)}
+                      onClick={(e) => handleBook(cls.id, e)}
                       className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition"
                     >
                       Book Seat
@@ -236,7 +257,11 @@ export default function HomeCatalog() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-4">
             {filteredClasses.map((cls) => (
-              <div key={cls.id} className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition flex flex-col justify-between group">
+              <div 
+                key={cls.id} 
+                onClick={() => navigate(`/course/${cls.id}`)}
+                className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition flex flex-col justify-between group cursor-pointer"
+              >
                 <div>
                   <div className="h-48 bg-slate-900 relative overflow-hidden flex items-center justify-center text-white">
                     <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
@@ -259,7 +284,7 @@ export default function HomeCatalog() {
                 <div className="p-6 pt-0 flex justify-between items-center border-t border-slate-100 mt-4">
                   <span className="text-xs bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg font-medium">{cls.duration_minutes} mins</span>
                   <button 
-                    onClick={() => handleBook(cls.id)}
+                    onClick={(e) => handleBook(cls.id, e)}
                     className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition"
                   >
                     Book Seat

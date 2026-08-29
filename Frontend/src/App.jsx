@@ -5,6 +5,7 @@ import Login from './pages/Login';
 import HomeCatalog from './pages/HomeCatalog';
 import StudentDashboard from './pages/StudentDashboard';
 import TeacherDashboard from './pages/Dashboard';
+import CourseDetail from './pages/CourseDetail';
 
 export default function App() {
   const { user } = useContext(AuthContext);
@@ -12,6 +13,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomeCatalog />} />
+      <Route path="/course/:id" element={<CourseDetail />} />
       <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
       <Route 
         path="/dashboard" 

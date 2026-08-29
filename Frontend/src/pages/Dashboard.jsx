@@ -60,8 +60,8 @@ export default function TeacherDashboard() {
   const openCloudinaryWidget = () => {
     window.cloudinary.createUploadWidget(
       {
-        cloudName: 'dxq2w5z2z', // Replace with your actual Cloudinary cloud name if different
-        uploadPreset: 'madrastak_presets', // Replace with your actual Cloudinary unsigned upload preset name
+        cloudName: 'vspcdig8', // Replace with your actual Cloudinary cloud name if different
+        uploadPreset: 'madrastak', // Replace with your actual Cloudinary unsigned upload preset name
         sources: ['local', 'url', 'camera'],
         multiple: false,
         cropping: true,

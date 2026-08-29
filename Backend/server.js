@@ -166,7 +166,7 @@ app.post('/api/bookings', verifyToken, async (req, res) => {
 app.get('/api/classes', async (req, res) => {
   try {
     const [classes] = await db.query(`
-      SELECT lc.*, u.full_name AS teacher_name 
+      SELECT lc.*, u.full_name AS teacher_name, u.bio AS teacher_bio 
       FROM live_classes lc 
       JOIN users u ON lc.teacher_id = u.id 
       ORDER BY lc.start_time ASC
@@ -321,10 +321,8 @@ app.put('/api/teacher/profile', verifyToken, async (req, res) => {
 
   const { full_name, bio } = req.body;
   try {
-    // If you haven't added a 'bio' column to your users table yet, 
-    // you can either add it or store just the name for now.
-    await db.query('UPDATE users SET full_name = ? WHERE id = ?', [full_name, req.user.id]);
-    res.json({ message: 'Instructor profile updated successfully!' });
+    await db.query('UPDATE users SET full_name = ?, bio = ? WHERE id = ?', [full_name, bio, req.user.id]);
+    res.json({ message: 'Profile updated successfully!' });
   } catch (error) {
     console.error('Update teacher profile error:', error);
     res.status(500).json({ message: 'Internal server error.' });

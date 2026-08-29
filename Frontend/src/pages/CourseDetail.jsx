@@ -124,7 +124,7 @@ export default function CourseDetail() {
             <div className="bg-white border border-slate-200/80 p-8 rounded-3xl shadow-sm space-y-4">
               <h3 className="text-xl font-black text-slate-900">About This Live Session</h3>
               <p className="text-slate-600 leading-relaxed text-sm">
-                Join instructor {classDetails.teacher_name} for a fully immersive live session hosted via Jitsi. Ask questions in real-time, collaborate with fellow students, and master the core modules of this topic.
+                Join instructor {classDetails.teacher_name} for a fully immersive live session. Ask questions in real-time, collaborate with fellow students, and master the core modules of this topic.
               </p>
             </div>
           </div>
@@ -143,7 +143,7 @@ export default function CourseDetail() {
                 </div>
               </div>
               <p className="text-xs text-slate-500 leading-relaxed">
-                Dedicated educator specializing in modern web architecture, interactive training, and practical software development.
+                {classDetails.teacher_bio || 'Dedicated educator specializing in interactive training and practical software development.'}
               </p>
             </div>
 
@@ -154,7 +154,7 @@ export default function CourseDetail() {
               >
                 Book Your Seat Now
               </button>
-              <p className="text-xs text-slate-400">Instant access to Jitsi live classroom upon booking.</p>
+              <p className="text-xs text-slate-400">Instant access to live classroom upon booking.</p>
             </div>
           </div>
         </div>

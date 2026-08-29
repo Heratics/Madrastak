@@ -26,8 +26,7 @@ export default function TeacherDashboard() {
 
   // Profile & Settings State
   const [fullName, setFullName] = useState(user?.full_name || '');
-  const [bio, setBio] = useState('');
-  const [profilePic, setProfilePic] = useState(null);
+  const [bio, setBio] = useState(user?.bio || '');
   const [profilePicPreview, setProfilePicPreview] = useState(user?.profile_pic || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -57,12 +56,25 @@ export default function TeacherDashboard() {
     fetchTeacherClasses();
   }, []);
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setProfilePic(file);
-      setProfilePicPreview(URL.createObjectURL(file));
-    }
+  // Cloudinary Widget Integration
+  const openCloudinaryWidget = () => {
+    window.cloudinary.createUploadWidget(
+      {
+        cloudName: 'dxq2w5z2z', // Replace with your actual Cloudinary cloud name if different
+        uploadPreset: 'madrastak_presets', // Replace with your actual Cloudinary unsigned upload preset name
+        sources: ['local', 'url', 'camera'],
+        multiple: false,
+        cropping: true,
+        croppingAspectRatio: 1,
+      },
+      (error, result) => {
+        if (!error && result && result.event === 'success') {
+          const imageUrl = result.info.secure_url;
+          setProfilePicPreview(imageUrl);
+          showToast('Image uploaded successfully! Click Save Profile to apply.');
+        }
+      }
+    ).open();
   };
 
   const handleSaveProfile = async (e) => {
@@ -74,7 +86,7 @@ export default function TeacherDashboard() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ full_name: fullName, bio })
+        body: JSON.stringify({ full_name: fullName, bio, profile_pic: profilePicPreview })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
@@ -398,7 +410,7 @@ export default function TeacherDashboard() {
           <div className="max-w-xl bg-white border border-slate-200/80 p-8 rounded-2xl shadow-sm space-y-6">
             <h3 className="text-lg font-bold text-slate-900">Instructor Profile</h3>
             
-            {/* Profile Picture Uploader */}
+            {/* Profile Picture Uploader via Cloudinary */}
             <div className="flex items-center gap-6">
               <div className="relative w-20 h-20 rounded-full bg-red-100 text-red-600 font-bold text-3xl flex items-center justify-center overflow-hidden border-2 border-slate-200">
                 {profilePicPreview ? (
@@ -408,11 +420,14 @@ export default function TeacherDashboard() {
                 )}
               </div>
               <div className="space-y-2">
-                <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-xs font-semibold transition inline-flex items-center gap-2">
+                <button 
+                  type="button"
+                  onClick={openCloudinaryWidget}
+                  className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-xs font-semibold transition inline-flex items-center gap-2"
+                >
                   <Camera className="w-4 h-4" /> Upload Photo
-                  <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
-                </label>
-                <p className="text-xs text-slate-400">JPG, PNG or GIF. Max size 2MB.</p>
+                </button>
+                <p className="text-xs text-slate-400">JPG, PNG or GIF via Cloudinary.</p>
               </div>
             </div>
 

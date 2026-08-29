@@ -2,6 +2,7 @@ import React, { useState, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { GraduationCap, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { API_URL } from '../config';
 
 export default function Login() {
   const [isRegister, setIsRegister] = useState(false);
@@ -20,7 +21,7 @@ export default function Login() {
     e.preventDefault();
     setError('');
 
-    const endpoint = isRegister ? 'http://localhost:5000/api/register' : 'http://localhost:5000/api/login';
+    const endpoint = isRegister ? `${API_URL}/api/register` : `${API_URL}/api/login`;
     const payload = isRegister 
       ? { full_name: fullName, email, password, role }
       : { email, password };

@@ -5,6 +5,7 @@ import {
   LayoutDashboard, BookOpen, Video, FileText, Award, Heart, 
   Bell, User, Settings, LogOut, Clock, CheckCircle, TrendingUp 
 } from 'lucide-react';
+import { API_URL } from '../config';
 
 export default function StudentDashboard() {
   const { user, logout } = useContext(AuthContext);
@@ -14,7 +15,7 @@ export default function StudentDashboard() {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    fetch('http://localhost:5000/api/student/bookings', {
+    fetch(`${API_URL}/api/student/bookings`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
       .then(res => res.json())

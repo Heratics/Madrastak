@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Search, User, BookOpen, Video, Award, Users, Star, Clock, GraduationCap } from 'lucide-react';
+import { API_URL } from '../config';
 
 export default function HomeCatalog() {
   const { user, logout } = useContext(AuthContext);
@@ -12,13 +13,13 @@ export default function HomeCatalog() {
 
   useEffect(() => {
     // Fetch live classes
-    fetch('http://localhost:5000/api/classes')
+    fetch(`${API_URL}/api/classes`)
       .then(res => res.json())
       .then(data => { if (Array.isArray(data)) setClasses(data); })
       .catch(err => console.error(err));
 
     // Fetch real-time database stats
-    fetch('http://localhost:5000/api/stats')
+    fetch(`${API_URL}/api/stats`)
       .then(res => res.json())
       .then(data => { if (data) setStats(data); })
       .catch(err => console.error(err));
@@ -31,7 +32,7 @@ export default function HomeCatalog() {
     }
     const token = localStorage.getItem('token');
     try {
-      const res = await fetch('http://localhost:5000/api/bookings', {
+      const res = await fetch(`${API_URL}/api/bookings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

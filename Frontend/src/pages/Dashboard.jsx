@@ -24,10 +24,10 @@ export default function TeacherDashboard() {
   const [durationMinutes, setDurationMinutes] = useState('60');
   const [studentLimit, setStudentLimit] = useState('25');
 
-  // Profile & Settings State
+// Profile & Settings State
   const [fullName, setFullName] = useState(user?.full_name || '');
-  const [bio, setBio] = useState(user?.bio || '');
-  const [profilePicPreview, setProfilePicPreview] = useState(user?.profile_pic || '');
+  const [bio, setBio] = useState('');
+  const [profilePicPreview, setProfilePicPreview] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
@@ -54,6 +54,20 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     fetchTeacherClasses();
+
+    // Fetch fresh profile data so bio and profile picture don't blank out on reload
+    fetch(`${API_URL}/api/user/profile`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data) {
+          if (data.full_name) setFullName(data.full_name);
+          if (data.bio) setBio(data.bio);
+          if (data.profile_pic) setProfilePicPreview(data.profile_pic);
+        }
+      })
+      .catch(err => console.error(err));
   }, []);
 
   // Cloudinary Widget Integration

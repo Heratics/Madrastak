@@ -166,7 +166,7 @@ app.post('/api/bookings', verifyToken, async (req, res) => {
 app.get('/api/classes', async (req, res) => {
   try {
     const [classes] = await db.query(`
-      SELECT lc.*, u.full_name AS teacher_name, u.bio AS teacher_bio 
+      SELECT lc.*, u.full_name AS teacher_name, u.bio AS teacher_bio, u.profile_pic AS teacher_profile_pic 
       FROM live_classes lc 
       JOIN users u ON lc.teacher_id = u.id 
       ORDER BY lc.start_time ASC
@@ -328,6 +328,18 @@ app.put('/api/teacher/profile', verifyToken, async (req, res) => {
     res.json({ message: 'Profile updated successfully!' });
   } catch (error) {
     console.error('Update teacher profile error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+// --- Get User Profile ---
+app.get('/api/user/profile', verifyToken, async (req, res) => {
+  try {
+    const [users] = await db.query('SELECT id, full_name, email, role, bio, profile_pic FROM users WHERE id = ?', [req.user.id]);
+    if (users.length === 0) return res.status(404).json({ message: 'User not found' });
+    res.json(users[0]);
+  } catch (error) {
+    console.error('Get profile error:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 });

@@ -134,8 +134,12 @@ export default function CourseDetail() {
             <div className="bg-white border border-slate-200/80 p-6 rounded-3xl shadow-sm space-y-6">
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Instructor</h3>
               <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-full bg-red-100 text-red-600 font-bold text-xl flex items-center justify-center border-2 border-slate-100">
-                  {classDetails.teacher_name?.[0]}
+                <div className="w-14 h-14 rounded-full bg-red-100 text-red-600 font-bold text-xl flex items-center justify-center overflow-hidden border-2 border-slate-100">
+                  {classDetails.teacher_profile_pic ? (
+                    <img src={classDetails.teacher_profile_pic} alt="Instructor" className="w-full h-full object-cover" />
+                  ) : (
+                    classDetails.teacher_name?.[0]
+                  )}
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-900 text-base">{classDetails.teacher_name}</h4>

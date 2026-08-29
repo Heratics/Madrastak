@@ -28,7 +28,15 @@ export default function HomeCatalog() {
     // Fetch real-time database stats
     fetch(`${API_URL}/api/stats`)
       .then(res => res.json())
-      .then(data => { if (data) setStats(data); })
+      .then(data => { 
+        if (data) {
+          setStats({
+            students: data.students ?? data.totalStudents ?? 0,
+            classes: data.classes ?? data.totalClasses ?? 0,
+            teachers: data.teachers ?? data.totalTeachers ?? 0
+          }); 
+        }
+      })
       .catch(err => console.error(err));
   }, []);
 

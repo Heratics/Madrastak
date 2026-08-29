@@ -259,9 +259,9 @@ app.get('/api/student/bookings', verifyToken, async (req, res) => {
 // --- 9. Get Platform Statistics (Real-Time from DB) ---
 app.get('/api/stats', async (req, res) => {
   try {
-    const [studentsResult] = await db.query('SELECT COUNT(*) AS total FROM users WHERE role = "student"');
-    const [classesResult] = await db.query('SELECT COUNT(*) AS total FROM live_classes');
-    const [teachersResult] = await db.query('SELECT COUNT(*) AS total FROM users WHERE role = "teacher"');
+    const [studentsResult] = await db.query("SELECT COUNT(*) AS total FROM users WHERE role = 'student'");
+    const [classesResult] = await db.query("SELECT COUNT(*) AS total FROM live_classes");
+    const [teachersResult] = await db.query("SELECT COUNT(*) AS total FROM users WHERE role = 'teacher'");
 
     const totalStudents = studentsResult?.[0]?.total ? Number(studentsResult[0].total) : 0;
     const totalClasses = classesResult?.[0]?.total ? Number(classesResult[0].total) : 0;

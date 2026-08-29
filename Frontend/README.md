@@ -1,16 +1,22 @@
-# React + Vite
+# Madrastak EdTech Platform
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## ⚠️ Copyright & Proprietary Notice
 
-Currently, two official plugins are available:
+**© 2026 Ahmad Moayad Ahmad Alshara. All Rights Reserved.**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+This repository and all of its contents, source code, UI designs, database schemas, graphics, and documentation are the proprietary intellectual property of the author. 
 
-## React Compiler
+### Terms of Use & Legal Restrictions:
+* **All Rights Reserved:** No part of this codebase, software design, or associated assets may be reproduced, distributed, mirrored, or transmitted in any form or by any means, including```markdown
+# Madrastak EdTech Platform
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Copyright Notice & Proprietary Rights
 
-## Expanding the ESLint configuration
+© 2026 Ahmad Moayad Ahmad Alshara. All rights reserved.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+This repository contains proprietary software and source code for **Madrastak**. Unauthorized copying, modification, distribution, public performance, public display, or commercial exploitation of this code, or any portion of it, via any medium is strictly prohibited. 
+
+This project is legally protected under applicable copyright laws and international treaties. Any unauthorized use, reproduction, or derivation of this codebase will be subject to strict legal prosecution to the maximum extent permitted by law.
+
+## Overview
+Madrastak is a modern, branded EdTech platform featuring real-time statistics, live classrooms, and role-based management dashboards.

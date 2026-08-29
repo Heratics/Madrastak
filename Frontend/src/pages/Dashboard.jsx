@@ -77,7 +77,7 @@ export default function TeacherDashboard() {
     ).open();
   };
 
-  const handleSaveProfile = async (e) => {
+const handleSaveProfile = async (e) => {
     e.preventDefault();
     try {
       const res = await fetch(`${API_URL}/api/teacher/profile`, {
@@ -90,7 +90,15 @@ export default function TeacherDashboard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
+      
       showToast('Profile updated successfully!');
+      
+      // Instantly update user context object locally if available
+      if (user) {
+        user.full_name = fullName;
+        user.bio = bio;
+        user.profile_pic = profilePicPreview;
+      }
     } catch (err) {
       showToast(err.message, 'error');
     }

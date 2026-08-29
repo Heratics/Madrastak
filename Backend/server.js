@@ -319,9 +319,12 @@ app.put('/api/teacher/profile', verifyToken, async (req, res) => {
     return res.status(403).json({ message: 'Access denied.' });
   }
 
-  const { full_name, bio } = req.body;
+  const { full_name, bio, profile_pic } = req.body;
   try {
-    await db.query('UPDATE users SET full_name = ?, bio = ? WHERE id = ?', [full_name, bio, req.user.id]);
+    await db.query(
+      'UPDATE users SET full_name = ?, bio = ?, profile_pic = ? WHERE id = ?', 
+      [full_name, bio, profile_pic, req.user.id]
+    );
     res.json({ message: 'Profile updated successfully!' });
   } catch (error) {
     console.error('Update teacher profile error:', error);

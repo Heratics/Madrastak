@@ -313,6 +313,24 @@ app.put('/api/user/password', verifyToken, async (req, res) => {
   }
 });
 
+// --- Update Instructor Profile ---
+app.put('/api/teacher/profile', verifyToken, async (req, res) => {
+  if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Access denied.' });
+  }
+
+  const { full_name, bio } = req.body;
+  try {
+    // If you haven't added a 'bio' column to your users table yet, 
+    // you can either add it or store just the name for now.
+    await db.query('UPDATE users SET full_name = ? WHERE id = ?', [full_name, req.user.id]);
+    res.json({ message: 'Instructor profile updated successfully!' });
+  } catch (error) {
+    console.error('Update teacher profile error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

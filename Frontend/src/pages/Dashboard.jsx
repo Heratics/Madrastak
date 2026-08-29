@@ -3,7 +3,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, BookOpen, PlusCircle, User, Settings, 
-  LogOut, Video, Users, Clock, Trash2, CheckCircle, GraduationCap, Eye, EyeOff 
+  LogOut, Video, Users, Clock, Trash2, CheckCircle, GraduationCap, X, AlertCircle, Camera 
 } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -13,6 +13,9 @@ export default function TeacherDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [classes, setClasses] = useState([]);
   
+  // Custom Toast Popup State
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
   // Create Class Form State
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -24,12 +27,19 @@ export default function TeacherDashboard() {
   // Profile & Settings State
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [bio, setBio] = useState('');
+  const [profilePic, setProfilePic] = useState(null);
+  const [profilePicPreview, setProfilePicPreview] = useState(user?.profile_pic || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [message, setMessage] = useState('');
 
   const token = localStorage.getItem('token');
+
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => {
+      setToast({ show: false, message: '', type: 'success' });
+    }, 4000);
+  };
 
   const fetchTeacherClasses = async () => {
     try {
@@ -47,10 +57,22 @@ export default function TeacherDashboard() {
     fetchTeacherClasses();
   }, []);
 
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setProfilePic(file);
+      setProfilePicPreview(URL.createObjectURL(file));
+    }
+  };
+
+  const handleSaveProfile = (e) => {
+    e.preventDefault();
+    // Profile save logic / API call can be hooked here
+    showToast('Profile updated successfully!');
+  };
+
   const handleCreateClass = async (e) => {
     e.preventDefault();
-    setMessage('');
-    
     const finalDuration = isNoLimitDuration ? 999999 : parseInt(durationMinutes);
 
     try {
@@ -71,14 +93,14 @@ export default function TeacherDashboard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
 
-      alert('Class scheduled successfully!');
+      showToast('Class scheduled successfully!');
       setTitle('');
       setDescription('');
       setStartTime('');
       setActiveTab('classes');
       fetchTeacherClasses();
     } catch (err) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
@@ -90,14 +112,28 @@ export default function TeacherDashboard() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Failed to delete class');
+      showToast('Class deleted successfully.');
       fetchTeacherClasses();
     } catch (err) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen bg-slate-50 flex relative">
+      {/* Custom In-App Toast Popup */}
+      {toast.show && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-4 rounded-2xl shadow-xl text-white text-sm font-medium transition transform animate-bounce ${
+          toast.type === 'error' ? 'bg-red-600' : 'bg-slate-900'
+        }`}>
+          {toast.type === 'error' ? <AlertCircle className="w-5 h-5 text-white" /> : <CheckCircle className="w-5 h-5 text-emerald-400" />}
+          <span>{toast.message}</span>
+          <button onClick={() => setToast({ show: false, message: '', type: 'success' })} className="ml-2 text-white/70 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Sidebar Navigation */}
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between hidden md:flex sticky top-0 h-screen">
         <div>
@@ -141,7 +177,7 @@ export default function TeacherDashboard() {
             <h1 className="text-2xl font-black text-slate-900 capitalize">{activeTab}</h1>
             <p className="text-slate-500 text-sm mt-0.5">Welcome back, {user?.full_name} (Instructor)</p>
           </div>
-          <button onClick={() => navigate('/')} className="text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-xl font-semibold transition">
+          <button onClick={() => navigate('/')} className="text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2.5 rounded-xl font-semibold transition text-slate-700">
             View Public Site
           </button>
         </div>
@@ -326,17 +362,27 @@ export default function TeacherDashboard() {
         {/* TAB 4: PROFILE */}
         {activeTab === 'profile' && (
           <div className="max-w-xl bg-white border border-slate-200/80 p-8 rounded-2xl shadow-sm space-y-6">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-full bg-red-100 text-red-600 font-bold text-2xl flex items-center justify-center">
-                {user?.full_name?.[0]}
+            <h3 className="text-lg font-bold text-slate-900">Instructor Profile</h3>
+            
+            {/* Profile Picture Uploader */}
+            <div className="flex items-center gap-6">
+              <div className="relative w-20 h-20 rounded-full bg-red-100 text-red-600 font-bold text-3xl flex items-center justify-center overflow-hidden border-2 border-slate-200">
+                {profilePicPreview ? (
+                  <img src={profilePicPreview} alt="Profile" className="w-full h-full object-cover" />
+                ) : (
+                  user?.full_name?.[0]
+                )}
               </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">{user?.full_name}</h3>
-                <p className="text-xs text-slate-500">{user?.email}</p>
+              <div className="space-y-2">
+                <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-xs font-semibold transition inline-flex items-center gap-2">
+                  <Camera className="w-4 h-4" /> Upload Photo
+                  <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
+                </label>
+                <p className="text-xs text-slate-400">JPG, PNG or GIF. Max size 2MB.</p>
               </div>
             </div>
 
-            <div className="space-y-4">
+            <form onSubmit={handleSaveProfile} className="space-y-4">
               <div>
                 <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Full Name</label>
                 <input 
@@ -358,10 +404,10 @@ export default function TeacherDashboard() {
                 />
               </div>
 
-              <button onClick={() => alert('Profile updated successfully!')} className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition">
+              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition">
                 Save Profile
               </button>
-            </div>
+            </form>
           </div>
         )}
 
@@ -392,7 +438,7 @@ export default function TeacherDashboard() {
                 />
               </div>
 
-              <button onClick={() => alert('Password updated successfully!')} className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition">
+              <button onClick={() => showToast('Password updated successfully!')} className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition">
                 Update Password
               </button>
             </div>

@@ -1,215 +1,207 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { Calendar, Video, PlusCircle, User, Clock, Trash2, Users, LogIn } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { 
+  LayoutDashboard, BookOpen, PlusCircle, User, Settings, 
+  LogOut, Video, Users, Clock, Trash2, CheckCircle, GraduationCap, Eye, EyeOff 
+} from 'lucide-react';
+import { API_URL } from '../config';
 
-export default function Dashboard() {
+export default function TeacherDashboard() {
   const { user, logout } = useContext(AuthContext);
   const navigate = useNavigate();
-
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [classes, setClasses] = useState([]);
-  const [teacherClasses, setTeacherClasses] = useState([]);
-  const [studentBookings, setStudentBookings] = useState([]);
-  const [activeTab, setActiveTab] = useState('catalog'); // 'catalog' or 'my-bookings'
-
-  // Teacher form state
+  
+  // Create Class Form State
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [startTime, setStartTime] = useState('');
-  const [duration, setDuration] = useState(60);
+  const [isNoLimitDuration, setIsNoLimitDuration] = useState(false);
+  const [durationMinutes, setDurationMinutes] = useState('60');
+  const [studentLimit, setStudentLimit] = useState('25');
 
-  const fetchData = async () => {
-    const token = localStorage.getItem('token');
+  // Profile & Settings State
+  const [fullName, setFullName] = useState(user?.full_name || '');
+  const [bio, setBio] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const token = localStorage.getItem('token');
+
+  const fetchTeacherClasses = async () => {
     try {
-      // Always fetch public catalog so anyone can see it
-      const res = await fetch('http://localhost:5000/api/classes');
+      const res = await fetch(`${API_URL}/api/teacher/classes`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       const data = await res.json();
-      if (res.ok) setClasses(data);
-
-      if (user?.role === 'teacher') {
-        const tRes = await fetch('http://localhost:5000/api/teacher/classes', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const tData = await tRes.json();
-        if (tRes.ok) setTeacherClasses(tData);
-      } else if (user?.role === 'student') {
-        const bRes = await fetch('http://localhost:5000/api/student/bookings', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const bData = await bRes.json();
-        if (bRes.ok) setStudentBookings(bData);
-      }
+      if (Array.isArray(data)) setClasses(data);
     } catch (err) {
       console.error(err);
     }
   };
 
   useEffect(() => {
-    fetchData();
-  }, [user]);
+    fetchTeacherClasses();
+  }, []);
 
   const handleCreateClass = async (e) => {
     e.preventDefault();
-    const token = localStorage.getItem('token');
+    setMessage('');
+    
+    const finalDuration = isNoLimitDuration ? 999999 : parseInt(durationMinutes);
+
     try {
-      const res = await fetch('http://localhost:5000/api/classes', {
+      const res = await fetch(`${API_URL}/api/classes`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ title, description, start_time: startTime, duration_minutes: parseInt(duration) })
+        body: JSON.stringify({
+          title,
+          description,
+          start_time: startTime,
+          duration_minutes: finalDuration,
+          student_limit: studentLimit
+        })
       });
-      if (!res.ok) throw new Error('Failed to create class');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+
       alert('Class scheduled successfully!');
-      setTitle(''); setDescription(''); setStartTime('');
-      fetchData();
+      setTitle('');
+      setDescription('');
+      setStartTime('');
+      setActiveTab('classes');
+      fetchTeacherClasses();
     } catch (err) {
       alert(err.message);
     }
   };
 
   const handleDeleteClass = async (classId) => {
-    if (!confirm('Are you sure you want to delete this class?')) return;
-    const token = localStorage.getItem('token');
+    if (!window.confirm('Are you sure you want to delete this class?')) return;
     try {
-      await fetch(`http://localhost:5000/api/classes/${classId}`, {
+      const res = await fetch(`${API_URL}/api/classes/${classId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      fetchData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleBookClass = async (classId) => {
-    if (!user) {
-      alert('Please log in or register to book a seat.');
-      navigate('/login');
-      return;
-    }
-
-    const token = localStorage.getItem('token');
-    try {
-      const res = await fetch('http://localhost:5000/api/bookings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ class_id: classId })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
-      alert('Successfully booked seat!');
-      fetchData();
+      if (!res.ok) throw new Error('Failed to delete class');
+      fetchTeacherClasses();
     } catch (err) {
       alert(err.message);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
-      {/* Navbar */}
-      <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex justify-between items-center">
-        <div className="flex items-center space-x-3 cursor-pointer" onClick={() => navigate('/')}>
-          <div className="bg-indigo-600 p-2 rounded-xl">
-            <Video className="w-6 h-6 text-white" />
+    <div className="min-h-screen bg-slate-50 flex">
+      {/* Sidebar Navigation */}
+      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between hidden md:flex sticky top-0 h-screen">
+        <div>
+          <div className="p-6 flex items-center gap-3 border-b border-slate-100 cursor-pointer" onClick={() => navigate('/')}>
+            <div className="bg-red-600 text-white p-2 rounded-xl font-bold flex items-center justify-center">
+              <GraduationCap className="w-5 h-5" />
+            </div>
+            <span className="text-xl font-black text-slate-900">Madrastak</span>
           </div>
-          <span className="text-xl font-bold tracking-wide">Madrastak</span>
-        </div>
 
-        <div className="flex items-center space-x-4">
-          {user ? (
-            <>
-              <div className="text-right">
-                <p className="font-medium text-sm">{user.full_name}</p>
-                <p className="text-xs text-indigo-400 capitalize">{user.role}</p>
-              </div>
-              <button onClick={logout} className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm transition">
-                Log Out
-              </button>
-            </>
-          ) : (
-            <button onClick={() => navigate('/login')} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
-              <LogIn className="w-4 h-4" /> Log In / Sign Up
+          <nav className="p-4 space-y-1.5 text-sm font-medium text-slate-600">
+            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'dashboard' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+              <LayoutDashboard className="w-5 h-5" /> Dashboard
             </button>
-          )}
+            <button onClick={() => setActiveTab('classes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'classes' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+              <BookOpen className="w-5 h-5" /> My Classes
+            </button>
+            <button onClick={() => setActiveTab('create')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'create' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+              <PlusCircle className="w-5 h-5" /> Create Class
+            </button>
+            <button onClick={() => setActiveTab('profile')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'profile' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+              <User className="w-5 h-5" /> Profile
+            </button>
+            <button onClick={() => setActiveTab('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'settings' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+              <Settings className="w-5 h-5" /> Settings
+            </button>
+          </nav>
         </div>
-      </nav>
 
-      <main className="max-w-6xl mx-auto p-6 space-y-8">
-        
-        {/* TEACHER DASHBOARD */}
-        {user?.role === 'teacher' && (
-          <div className="space-y-6">
-            <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl shadow-lg">
-              <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <PlusCircle className="text-indigo-400" /> Schedule a Live Class
-              </h2>
-              <form onSubmit={handleCreateClass} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-slate-300 text-sm mb-1">Class Title</label>
-                  <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="e.g., Advanced JavaScript" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500" />
-                </div>
-                <div>
-                  <label className="block text-slate-300 text-sm mb-1">Start Time</label>
-                  <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} required className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500" />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-slate-300 text-sm mb-1">Description</label>
-                  <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows="2" placeholder="Session details..." className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500"></textarea>
-                </div>
-                <div>
-                  <label className="block text-slate-300 text-sm mb-1">Duration (Minutes)</label>
-                  <input type="number" value={duration} onChange={(e) => setDuration(e.target.value)} required className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500" />
-                </div>
-                <div className="flex items-end">
-                  <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 font-semibold py-3 rounded-lg transition">Publish Class Room</button>
-                </div>
-              </form>
+        <div className="p-4 border-t border-slate-100">
+          <button onClick={logout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 font-medium transition">
+            <LogOut className="w-5 h-5" /> Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 p-8 md:p-12 space-y-8 overflow-y-auto">
+        <div className="flex justify-between items-center bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm">
+          <div>
+            <h1 className="text-2xl font-black text-slate-900 capitalize">{activeTab}</h1>
+            <p className="text-slate-500 text-sm mt-0.5">Welcome back, {user?.full_name} (Instructor)</p>
+          </div>
+          <button onClick={() => navigate('/')} className="text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-xl font-semibold transition">
+            View Public Site
+          </button>
+        </div>
+
+        {/* TAB 1: DASHBOARD OVERVIEW */}
+        {activeTab === 'dashboard' && (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
+                <div className="text-red-600"><BookOpen className="w-6 h-6" /></div>
+                <h3 className="text-3xl font-black text-slate-900">{classes.length}</h3>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Classes Hosted</p>
+              </div>
+              <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
+                <div className="text-emerald-600"><Users className="w-6 h-6" /></div>
+                <h3 className="text-3xl font-black text-slate-900">
+                  {classes.reduce((acc, c) => acc + (c.enrolled_students?.length || 0), 0)}
+                </h3>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Registered Students</p>
+              </div>
+              <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
+                <div className="text-blue-600"><Video className="w-6 h-6" /></div>
+                <h3 className="text-3xl font-black text-slate-900">{classes.filter(c => new Date(c.start_time) > new Date()).length}</h3>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upcoming Live Sessions</p>
+              </div>
             </div>
 
-            <div>
-              <h2 className="text-2xl font-bold mb-4">My Managed Classes & Student Rosters</h2>
-              {teacherClasses.length === 0 ? (
-                <p className="text-slate-400 bg-slate-800 p-6 rounded-xl border border-slate-700 text-center">You haven't scheduled any classes yet.</p>
+            <div className="space-y-6">
+              <h2 className="text-xl font-black text-slate-900">Your Classes & Registered Students</h2>
+              {classes.length === 0 ? (
+                <div className="bg-white border border-slate-200 p-8 rounded-2xl text-center text-slate-500">
+                  You haven't scheduled any classes yet. Click "Create Class" to start teaching!
+                </div>
               ) : (
-                <div className="space-y-4">
-                  {teacherClasses.map((cls) => (
-                    <div key={cls.id} className="bg-slate-800 border border-slate-700 p-6 rounded-2xl flex flex-col md:flex-row justify-between gap-6">
-                      <div className="space-y-2 flex-1">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-xl font-bold text-white">{cls.title}</h3>
-                          <button onClick={() => handleDeleteClass(cls.id)} className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-5 h-5" /></button>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {classes.map(cls => (
+                    <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-start">
+                          <span className="bg-red-50 text-red-600 text-xs font-bold px-3 py-1 rounded-full">Live Room</span>
+                          <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full flex items-center gap-1">
+                            <Users className="w-3.5 h-3.5" /> {cls.enrolled_students?.length || 0} Students Registered
+                          </span>
                         </div>
-                        <p className="text-slate-300 text-sm">{cls.description}</p>
-                        <p className="text-xs text-indigo-400 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {new Date(cls.start_time).toLocaleString()}</p>
-                        
-                        <div className="mt-4 pt-4 border-t border-slate-700">
-                          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1">
-                            <Users className="w-4 h-4 text-indigo-400" /> Enrolled Students ({cls.enrolled_students.length})
-                          </p>
-                          {cls.enrolled_students.length === 0 ? (
-                            <p className="text-xs text-slate-500 italic">No students registered yet.</p>
-                          ) : (
-                            <ul className="space-y-1">
-                              {cls.enrolled_students.map(student => (
-                                <li key={student.id} className="text-xs bg-slate-900/60 px-3 py-1.5 rounded-md flex justify-between text-slate-300">
-                                  <span>{student.full_name}</span>
-                                  <span className="text-slate-500">{student.email}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
+                        <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
+                        <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
+                        <p className="text-xs text-slate-400">Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
                       </div>
-
-                      <div className="flex flex-col justify-center items-end border-t md:border-t-0 md:border-l border-slate-700 pt-4 md:pt-0 md:pl-6">
-                        <a href={`https://meet.jit.si/${cls.meeting_room_id}`} target="_blank" rel="noopener noreferrer" className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-6 py-3 rounded-xl flex items-center gap-2 transition shadow-lg text-center">
-                          <Video className="w-5 h-5" /> Launch Live Room
+                      <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
+                        <a 
+                          href={`https://meet.jit.si/${cls.meeting_room_id}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
+                        >
+                          <Video className="w-4 h-4" /> Start Jitsi Room
                         </a>
+                        <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -219,93 +211,193 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* PUBLIC & STUDENT VIEW */}
-        {user?.role !== 'teacher' && (
+        {/* TAB 2: MY CLASSES */}
+        {activeTab === 'classes' && (
           <div className="space-y-6">
-            
-            {/* Student Navigation Tabs */}
-            {user?.role === 'student' && (
-              <div className="flex space-x-2 border-b border-slate-700 pb-4">
-                <button 
-                  onClick={() => setActiveTab('catalog')} 
-                  className={`px-4 py-2 rounded-lg font-semibold text-sm transition ${activeTab === 'catalog' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
-                >
-                  Explore Catalog
-                </button>
-                <button 
-                  onClick={() => setActiveTab('my-bookings')} 
-                  className={`px-4 py-2 rounded-lg font-semibold text-sm transition ${activeTab === 'my-bookings' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
-                >
-                  My Booked Classes ({studentBookings.length})
-                </button>
-              </div>
-            )}
-
-            {/* CATALOG TAB */}
-            {activeTab === 'catalog' && (
-              <div>
-                <div className="mb-6">
-                  <h1 className="text-3xl font-bold">Explore Live Learning Sessions</h1>
-                  <p className="text-slate-400 text-sm mt-1">Browse upcoming classes offered by expert instructors. Book your seat instantly.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {classes.map((cls) => (
-                    <div key={cls.id} className="bg-slate-800 border border-slate-700 p-6 rounded-2xl flex flex-col justify-between shadow-md">
-                      <div>
-                        <h3 className="text-xl font-bold text-white mb-2">{cls.title}</h3>
-                        <p className="text-slate-300 text-sm mb-4">{cls.description}</p>
-                        <div className="space-y-2 text-sm text-slate-400">
-                          <p className="flex items-center gap-2"><User className="w-4 h-4 text-indigo-400" /> Teacher: <span className="text-white font-medium">{cls.teacher_name}</span></p>
-                          <p className="flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-400" /> Starts: <span className="text-white font-medium">{new Date(cls.start_time).toLocaleString()}</span></p>
-                        </div>
-                      </div>
-                      <div className="mt-6 pt-4 border-t border-slate-700 flex justify-between items-center">
-                        <span className="text-xs bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-3 py-1 rounded-full font-medium">{cls.duration_minutes} Minutes</span>
-                        <button onClick={() => handleBookClass(cls.id)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
-                          Book Seat
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* STUDENT BOOKINGS TAB */}
-            {activeTab === 'my-bookings' && user?.role === 'student' && (
-              <div>
-                <h1 className="text-3xl font-bold mb-6">My Personal Schedule & Classrooms</h1>
-                {studentBookings.length === 0 ? (
-                  <p className="text-slate-400 bg-slate-800 p-6 rounded-xl border border-slate-700 text-center">You haven't booked any classes yet. Head to the catalog to reserve a seat!</p>
-                ) : (
-                  <div className="space-y-4">
-                    {studentBookings.map((cls) => (
-                      <div key={cls.id} className="bg-slate-800 border border-slate-700 p-6 rounded-2xl flex flex-col md:flex-row justify-between gap-6 items-center">
-                        <div className="space-y-2 flex-1">
-                          <h3 className="text-xl font-bold text-white">{cls.title}</h3>
-                          <p className="text-slate-300 text-sm">{cls.description}</p>
-                          <div className="flex gap-4 text-xs text-slate-400">
-                            <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-indigo-400" /> {cls.teacher_name}</span>
-                            <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-indigo-400" /> {new Date(cls.start_time).toLocaleString()}</span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <a href={`https://meet.jit.si/${cls.meeting_room_id}`} target="_blank" rel="noopener noreferrer" className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-6 py-3 rounded-xl flex items-center gap-2 transition shadow-lg">
-                            <Video className="w-5 h-5" /> Join Classroom
-                          </a>
-                        </div>
-                      </div>
-                    ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {classes.map(cls => (
+                <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4">
+                  <div className="space-y-2">
+                    <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
+                    <p className="text-slate-500 text-sm">{cls.description}</p>
+                    <p className="text-xs font-semibold text-slate-600">Students Registered: <span className="text-red-600 font-bold">{cls.enrolled_students?.length || 0}</span></p>
                   </div>
-                )}
-              </div>
-            )}
-
+                  <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
+                    <span className="text-xs text-slate-500">{new Date(cls.start_time).toLocaleString()}</span>
+                    <button onClick={() => handleDeleteClass(cls.id)} className="bg-red-50 text-red-600 hover:bg-red-100 px-4 py-2 rounded-xl text-xs font-semibold transition">
+                      Delete Class
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
+        {/* TAB 3: CREATE CLASS */}
+        {activeTab === 'create' && (
+          <div className="max-w-2xl bg-white border border-slate-200/80 p-8 rounded-2xl shadow-sm">
+            <form onSubmit={handleCreateClass} className="space-y-6">
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Class Title</label>
+                <input 
+                  type="text" 
+                  value={title} 
+                  onChange={(e) => setTitle(e.target.value)} 
+                  required 
+                  placeholder="Advanced Web Development Masterclass"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Description</label>
+                <textarea 
+                  value={description} 
+                  onChange={(e) => setDescription(e.target.value)} 
+                  required 
+                  rows="3"
+                  placeholder="What students will learn..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Start Time</label>
+                  <input 
+                    type="datetime-local" 
+                    value={startTime} 
+                    onChange={(e) => setStartTime(e.target.value)} 
+                    required 
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Student Limit</label>
+                  <select 
+                    value={studentLimit} 
+                    onChange={(e) => setStudentLimit(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                  >
+                    <option value="25">25 Students Max</option>
+                    <option value="50">50 Students Max</option>
+                    <option value="100">100 Students Max</option>
+                    <option value="unlimited">No Limit (Unlimited)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider">Duration</label>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isNoLimitDuration} 
+                      onChange={(e) => setIsNoLimitDuration(e.target.checked)}
+                      className="w-4 h-4 text-red-600 border-slate-300 rounded focus:ring-red-500"
+                    />
+                    <span className="text-sm font-medium text-slate-700">No Limit (Self-Paced / Ongoing)</span>
+                  </label>
+                </div>
+                {!isNoLimitDuration && (
+                  <input 
+                    type="number" 
+                    value={durationMinutes} 
+                    onChange={(e) => setDurationMinutes(e.target.value)}
+                    placeholder="Duration in minutes (e.g., 60)"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                  />
+                )}
+              </div>
+
+              <button 
+                type="submit" 
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3.5 rounded-xl shadow-lg shadow-red-600/25 transition"
+              >
+                Schedule & Create Live Class
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* TAB 4: PROFILE */}
+        {activeTab === 'profile' && (
+          <div className="max-w-xl bg-white border border-slate-200/80 p-8 rounded-2xl shadow-sm space-y-6">
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-full bg-red-100 text-red-600 font-bold text-2xl flex items-center justify-center">
+                {user?.full_name?.[0]}
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">{user?.full_name}</h3>
+                <p className="text-xs text-slate-500">{user?.email}</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Full Name</label>
+                <input 
+                  type="text" 
+                  value={fullName} 
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Instructor Bio</label>
+                <textarea 
+                  value={bio} 
+                  onChange={(e) => setBio(e.target.value)}
+                  rows="4"
+                  placeholder="Tell students about your professional background and expertise..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                />
+              </div>
+
+              <button onClick={() => alert('Profile updated successfully!')} className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition">
+                Save Profile
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: SETTINGS */}
+        {activeTab === 'settings' && (
+          <div className="max-w-xl bg-white border border-slate-200/80 p-8 rounded-2xl shadow-sm space-y-6">
+            <h3 className="text-lg font-bold text-slate-900">Change Password</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Current Password</label>
+                <input 
+                  type="password" 
+                  value={currentPassword} 
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">New Password</label>
+                <input 
+                  type="password" 
+                  value={newPassword} 
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                />
+              </div>
+
+              <button onClick={() => alert('Password updated successfully!')} className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition">
+                Update Password
+              </button>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

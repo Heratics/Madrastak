@@ -159,26 +159,21 @@ export default function HomeCatalog() {
 
           {/* Statistics Banner (Real-Time from DB) */}
           <section className="border-y border-slate-100 bg-slate-50/50 py-12">
-            <div className="max-w-7xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+            <div className="max-w-5xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
               <div className="space-y-1">
                 <div className="flex justify-center text-red-600 mb-2"><Users className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{stats.students}</h3>
+                <h3 className="text-3xl font-black text-slate-900">{stats.students ?? 0}</h3>
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Registered Students</p>
               </div>
               <div className="space-y-1">
                 <div className="flex justify-center text-red-600 mb-2"><BookOpen className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{stats.classes}</h3>
+                <h3 className="text-3xl font-black text-slate-900">{stats.classes ?? 0}</h3>
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Scheduled Classes</p>
               </div>
               <div className="space-y-1">
                 <div className="flex justify-center text-red-600 mb-2"><Award className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{stats.teachers}</h3>
+                <h3 className="text-3xl font-black text-slate-900">{stats.teachers ?? 0}</h3>
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Expert Lecturers</p>
-              </div>
-              <div className="space-y-1">
-                <div className="flex justify-center text-red-600 mb-2"><Star className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{stats.hoursWatched}h</h3>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Learning Hours</p>
               </div>
             </div>
           </section>

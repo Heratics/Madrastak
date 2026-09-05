@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, BookOpen, PlusCircle, User, Settings, 
   LogOut, Video, Users, Clock, Trash2, CheckCircle, GraduationCap, 
-  X, AlertCircle, Camera, UserCheck, Calendar, ShieldAlert 
+  X, AlertCircle, Camera, UserCheck, Calendar, ShieldAlert, Archive 
 } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -12,6 +12,7 @@ export default function TeacherDashboard() {
   const { user, logout } = useContext(AuthContext);
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [classesSubTab, setClassesSubTab] = useState('upcoming');
   const [classes, setClasses] = useState([]);
   
   // Custom Toast Popup State
@@ -51,15 +52,24 @@ export default function TeacherDashboard() {
 
   const fetchTeacherClasses = async () => {
     try {
+      const currentToken = localStorage.getItem('token') || token;
+      if (!currentToken) return;
       const res = await fetch(`${API_URL}/api/teacher/classes`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${currentToken}` }
       });
       const data = await res.json();
-      if (Array.isArray(data)) setClasses(data);
+      if (res.ok && Array.isArray(data)) {
+        setClasses(data);
+      } else {
+        console.error('Failed to fetch teacher classes:', data);
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Error fetching teacher classes:', err);
     }
   };
+
+  const upcomingClasses = classes.filter(c => c.status !== 'ended');
+  const concludedClasses = classes.filter(c => c.status === 'ended');
 
   useEffect(() => {
     fetchTeacherClasses();
@@ -196,11 +206,12 @@ export default function TeacherDashboard() {
     }
 
     try {
+      const currentToken = localStorage.getItem('token') || token;
       const res = await fetch(`${API_URL}/api/classes`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${currentToken}`
         },
         body: JSON.stringify({
           title: title.trim(),
@@ -211,14 +222,15 @@ export default function TeacherDashboard() {
         })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
+      if (!res.ok) throw new Error(data.message || 'Failed to schedule class');
 
       showToast('Class scheduled successfully!');
       setTitle('');
       setDescription('');
       setStartTime('');
+      await fetchTeacherClasses();
+      setClassesSubTab('upcoming');
       setActiveTab('classes');
-      fetchTeacherClasses();
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -227,13 +239,14 @@ export default function TeacherDashboard() {
   const handleDeleteClass = async (classId) => {
     if (!window.confirm('Are you sure you want to delete this class?')) return;
     try {
+      const currentToken = localStorage.getItem('token') || token;
       const res = await fetch(`${API_URL}/api/classes/${classId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${currentToken}` }
       });
       if (!res.ok) throw new Error('Failed to delete class');
       showToast('Class deleted successfully.');
-      fetchTeacherClasses();
+      await fetchTeacherClasses();
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -345,6 +358,9 @@ export default function TeacherDashboard() {
                             <td className="p-3.5 font-medium">
                               <p className="text-slate-900 font-bold">{student.full_name}</p>
                               <p className="text-slate-400 text-[11px]">{student.email}</p>
+                              {student.booked_at && (
+                                <p className="text-slate-400 text-[10px]">Booked: {new Date(student.booked_at).toLocaleDateString()}</p>
+                              )}
                             </td>
                             <td className="p-3.5">
                               {student.attended ? (
@@ -395,26 +411,61 @@ export default function TeacherDashboard() {
           </div>
 
           <nav className="p-4 space-y-1.5 text-sm font-medium text-slate-600">
-            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'dashboard' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+            <button 
+              onClick={() => setActiveTab('dashboard')} 
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'dashboard' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}
+            >
               <LayoutDashboard className="w-5 h-5" /> Dashboard
             </button>
-            <button onClick={() => setActiveTab('classes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'classes' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
-              <BookOpen className="w-5 h-5" /> My Classes
+            <button 
+              onClick={() => { setActiveTab('classes'); setClassesSubTab('upcoming'); }} 
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'classes' && classesSubTab === 'upcoming' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}
+            >
+              <div className="flex items-center gap-3">
+                <BookOpen className="w-5 h-5" /> Upcoming & Active
+              </div>
+              {upcomingClasses.length > 0 && (
+                <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-full">
+                  {upcomingClasses.length}
+                </span>
+              )}
             </button>
-            <button onClick={() => setActiveTab('create')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'create' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+            <button 
+              onClick={() => { setActiveTab('concluded'); setClassesSubTab('concluded'); }} 
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'concluded' || (activeTab === 'classes' && classesSubTab === 'concluded') ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}
+            >
+              <div className="flex items-center gap-3">
+                <Archive className="w-5 h-5" /> Concluded Classes
+              </div>
+              {concludedClasses.length > 0 && (
+                <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-0.5 rounded-full">
+                  {concludedClasses.length}
+                </span>
+              )}
+            </button>
+            <button 
+              onClick={() => setActiveTab('create')} 
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'create' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}
+            >
               <PlusCircle className="w-5 h-5" /> Create Class
             </button>
-            <button onClick={() => setActiveTab('profile')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'profile' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+            <button 
+              onClick={() => setActiveTab('profile')} 
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'profile' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}
+            >
               <User className="w-5 h-5" /> Profile
             </button>
-            <button onClick={() => setActiveTab('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'settings' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}>
+            <button 
+              onClick={() => setActiveTab('settings')} 
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition cursor-pointer ${activeTab === 'settings' ? 'bg-red-50 text-red-600 font-semibold' : 'hover:bg-slate-50'}`}
+            >
               <Settings className="w-5 h-5" /> Settings
             </button>
           </nav>
         </div>
 
         <div className="p-4 border-t border-slate-100">
-          <button onClick={logout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 font-medium transition">
+          <button onClick={logout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 font-medium transition cursor-pointer">
             <LogOut className="w-5 h-5" /> Logout
           </button>
         </div>
@@ -424,10 +475,17 @@ export default function TeacherDashboard() {
       <main className="flex-1 p-8 md:p-12 space-y-8 overflow-y-auto">
         <div className="flex justify-between items-center bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm">
           <div>
-            <h1 className="text-2xl font-black text-slate-900 capitalize">{activeTab}</h1>
+            <h1 className="text-2xl font-black text-slate-900">
+              {activeTab === 'dashboard' && 'Dashboard Overview'}
+              {activeTab === 'classes' && (classesSubTab === 'concluded' ? 'Concluded Classes' : 'Upcoming & Active Classes')}
+              {activeTab === 'concluded' && 'Concluded Classes'}
+              {activeTab === 'create' && 'Schedule & Create Class'}
+              {activeTab === 'profile' && 'Instructor Profile'}
+              {activeTab === 'settings' && 'Account Settings'}
+            </h1>
             <p className="text-slate-500 text-sm mt-0.5">Welcome back, {user?.full_name} (Instructor)</p>
           </div>
-          <button onClick={() => navigate('/')} className="text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2.5 rounded-xl font-semibold transition text-slate-700">
+          <button onClick={() => navigate('/')} className="text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2.5 rounded-xl font-semibold transition text-slate-700 cursor-pointer">
             View Public Site
           </button>
         </div>
@@ -435,35 +493,61 @@ export default function TeacherDashboard() {
         {/* TAB 1: DASHBOARD OVERVIEW */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
               <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
                 <div className="text-red-600"><BookOpen className="w-6 h-6" /></div>
                 <h3 className="text-3xl font-black text-slate-900">{classes.length}</h3>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Classes Hosted</p>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Hosted</p>
               </div>
               <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
                 <div className="text-emerald-600"><Users className="w-6 h-6" /></div>
                 <h3 className="text-3xl font-black text-slate-900">
                   {classes.reduce((acc, c) => acc + (c.enrolled_students?.length || 0), 0)}
                 </h3>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Registered Students</p>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Registered</p>
               </div>
               <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
                 <div className="text-blue-600"><Video className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{classes.filter(c => c.status !== 'ended').length}</h3>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upcoming & Active Sessions</p>
+                <h3 className="text-3xl font-black text-slate-900">{upcomingClasses.length}</h3>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upcoming & Active</p>
+              </div>
+              <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
+                <div className="text-slate-600"><Archive className="w-6 h-6" /></div>
+                <h3 className="text-3xl font-black text-slate-900">{concludedClasses.length}</h3>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Concluded</p>
               </div>
             </div>
 
-            <div className="space-y-6">
-              <h2 className="text-xl font-black text-slate-900">Your Classes & Registered Students</h2>
-              {classes.length === 0 ? (
-                <div className="bg-white border border-slate-200 p-8 rounded-2xl text-center text-slate-500">
-                  You haven't scheduled any classes yet. Click "Create Class" to start teaching!
+            {/* Upcoming & Active Section */}
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">Upcoming & Active Sessions</h2>
+                  <p className="text-xs text-slate-400">Classes ready to start or live right now</p>
+                </div>
+                {upcomingClasses.length > 0 && (
+                  <button 
+                    onClick={() => { setActiveTab('classes'); setClassesSubTab('upcoming'); }}
+                    className="text-xs font-bold text-red-600 hover:text-red-700 transition cursor-pointer"
+                  >
+                    Manage All ({upcomingClasses.length}) &rarr;
+                  </button>
+                )}
+              </div>
+
+              {upcomingClasses.length === 0 ? (
+                <div className="bg-white border border-slate-200 p-8 rounded-2xl text-center text-slate-500 space-y-3">
+                  <p>You have no upcoming or live classes scheduled right now.</p>
+                  <button 
+                    onClick={() => setActiveTab('create')}
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-md shadow-red-600/20 transition cursor-pointer"
+                  >
+                    Create a Class
+                  </button>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {classes.map(cls => (
+                  {upcomingClasses.map(cls => (
                     <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
                       <div className="space-y-2">
                         <div className="flex justify-between items-start">
@@ -487,24 +571,74 @@ export default function TeacherDashboard() {
                         <div className="flex items-center gap-2">
                           <button 
                             onClick={() => navigate(`/classroom/${cls.id}`)}
-                            disabled={cls.status === 'ended'}
-                            className={`${
-                              cls.status === 'ended' 
-                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
-                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20'
-                            } px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5`}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
                           >
                             <Video className="w-4 h-4" /> 
-                            {cls.status === 'live' ? 'Join Live Session' : cls.status === 'ended' ? 'Class Ended' : 'Start Virtual Session'}
+                            {cls.status === 'live' ? 'Join Live Session' : 'Start Virtual Session'}
                           </button>
                           <button 
                             onClick={() => handleOpenAttendance(cls.id)}
-                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
                           >
                             <UserCheck className="w-3.5 h-3.5 text-slate-500" /> Attendance
                           </button>
                         </div>
-                        <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition">
+                        <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition cursor-pointer">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Concluded Section on Dashboard Overview */}
+            <div className="space-y-4 pt-4 border-t border-slate-200">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">Recently Concluded Classes</h2>
+                  <p className="text-xs text-slate-400">Past lectures and student participation history</p>
+                </div>
+                {concludedClasses.length > 0 && (
+                  <button 
+                    onClick={() => { setActiveTab('concluded'); setClassesSubTab('concluded'); }}
+                    className="text-xs font-bold text-red-600 hover:text-red-700 transition cursor-pointer"
+                  >
+                    View All Concluded ({concludedClasses.length}) &rarr;
+                  </button>
+                )}
+              </div>
+
+              {concludedClasses.length === 0 ? (
+                <div className="bg-white border border-slate-200 p-8 rounded-2xl text-center text-slate-400 text-sm">
+                  No concluded classes yet. When sessions conclude, their attendance and records will remain visible here.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {concludedClasses.slice(0, 4).map(cls => (
+                    <div key={cls.id} className="bg-slate-50/70 border border-slate-200 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-start">
+                          {renderStatusBadge(cls.status)}
+                          <span className="text-xs font-medium text-slate-500 bg-white border border-slate-200 px-3 py-1 rounded-full flex items-center gap-1">
+                            <Users className="w-3.5 h-3.5 text-slate-400" />
+                            {cls.enrolled_students?.length || 0} Registered
+                          </span>
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800">{cls.title}</h3>
+                        <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
+                        <p className="text-xs text-slate-400">Ended session • Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
+                      </div>
+
+                      <div className="pt-4 border-t border-slate-200/60 flex flex-wrap justify-between items-center gap-2">
+                        <button 
+                          onClick={() => handleOpenAttendance(cls.id)}
+                          className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <UserCheck className="w-3.5 h-3.5 text-emerald-600" /> View Attendance & Roster
+                        </button>
+                        <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition cursor-pointer" title="Delete class record">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -516,53 +650,150 @@ export default function TeacherDashboard() {
           </div>
         )}
 
-        {/* TAB 2: MY CLASSES */}
-        {activeTab === 'classes' && (
+        {/* TAB 2 & CONCLUDED: CLASS MANAGEMENT INTERFACE */}
+        {(activeTab === 'classes' || activeTab === 'concluded') && (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {classes.map(cls => (
-                <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-start">
-                      {renderStatusBadge(cls.status)}
-                      <span className="text-xs font-semibold text-slate-600">
-                        Capacity: <strong className="text-red-600 font-bold">{cls.enrolled_students?.length || 0}</strong> {cls.student_limit ? `/ ${cls.student_limit}` : '(No limit)'}
-                      </span>
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
-                    <p className="text-slate-500 text-sm">{cls.description}</p>
-                    <p className="text-xs text-slate-500 font-medium">Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
+            {/* Sub-tabs header */}
+            <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+              <button 
+                onClick={() => { setActiveTab('classes'); setClassesSubTab('upcoming'); }}
+                className={`px-5 py-2.5 rounded-xl text-sm font-bold transition flex items-center gap-2 cursor-pointer ${
+                  (activeTab === 'classes' && classesSubTab === 'upcoming')
+                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20' 
+                    : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+                }`}
+              >
+                <Video className="w-4 h-4" />
+                Upcoming & Active ({upcomingClasses.length})
+              </button>
+              <button 
+                onClick={() => { setActiveTab('concluded'); setClassesSubTab('concluded'); }}
+                className={`px-5 py-2.5 rounded-xl text-sm font-bold transition flex items-center gap-2 cursor-pointer ${
+                  activeTab === 'concluded' || (activeTab === 'classes' && classesSubTab === 'concluded')
+                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20' 
+                    : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+                }`}
+              >
+                <Archive className="w-4 h-4" />
+                Concluded Classes ({concludedClasses.length})
+              </button>
+            </div>
+
+            {/* UPCOMING & ACTIVE SUB-VIEW */}
+            {((activeTab === 'classes' && classesSubTab === 'upcoming') || (activeTab !== 'concluded' && classesSubTab === 'upcoming')) && (
+              upcomingClasses.length === 0 ? (
+                <div className="bg-white border border-slate-200 p-12 rounded-2xl text-center space-y-4">
+                  <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mx-auto">
+                    <BookOpen className="w-6 h-6" />
                   </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">No Upcoming Classes</h3>
+                    <p className="text-slate-500 text-sm mt-1">You don't have any scheduled or live lectures right now.</p>
+                  </div>
+                  <button 
+                    onClick={() => setActiveTab('create')}
+                    className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition cursor-pointer"
+                  >
+                    Create a Class Now
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {upcomingClasses.map(cls => (
+                    <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-start">
+                          {renderStatusBadge(cls.status)}
+                          <span className="text-xs font-semibold text-slate-600">
+                            Capacity: <strong className="text-red-600 font-bold">{cls.enrolled_students?.length || 0}</strong> {cls.student_limit ? `/ ${cls.student_limit}` : '(No limit)'}
+                          </span>
+                        </div>
+                        <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
+                        <p className="text-slate-500 text-sm">{cls.description}</p>
+                        <p className="text-xs text-slate-500 font-medium">Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
+                      </div>
 
-                  <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => navigate(`/classroom/${cls.id}`)}
-                        disabled={cls.status === 'ended'}
-                        className={`${
-                          cls.status === 'ended' 
-                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
-                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                        } px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5`}
-                      >
-                        <Video className="w-4 h-4" /> 
-                        {cls.status === 'live' ? 'Enter Classroom' : cls.status === 'ended' ? 'Class Ended' : 'Host Session'}
-                      </button>
-                      <button 
-                        onClick={() => handleOpenAttendance(cls.id)}
-                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
-                      >
-                        <UserCheck className="w-3.5 h-3.5 text-slate-500" /> Attendance
-                      </button>
+                      <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => navigate(`/classroom/${cls.id}`)}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
+                          >
+                            <Video className="w-4 h-4" /> 
+                            {cls.status === 'live' ? 'Enter Live Classroom' : 'Host Virtual Session'}
+                          </button>
+                          <button 
+                            onClick={() => handleOpenAttendance(cls.id)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <UserCheck className="w-3.5 h-3.5 text-slate-500" /> Attendance
+                          </button>
+                        </div>
+
+                        <button onClick={() => handleDeleteClass(cls.id)} className="bg-red-50 text-red-600 hover:bg-red-100 px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer">
+                          Delete Class
+                        </button>
+                      </div>
                     </div>
+                  ))}
+                </div>
+              )
+            )}
 
-                    <button onClick={() => handleDeleteClass(cls.id)} className="bg-red-50 text-red-600 hover:bg-red-100 px-3.5 py-2 rounded-xl text-xs font-semibold transition">
-                      Delete Class
-                    </button>
+            {/* CONCLUDED SUB-VIEW */}
+            {(activeTab === 'concluded' || classesSubTab === 'concluded') && (
+              concludedClasses.length === 0 ? (
+                <div className="bg-white border border-slate-200 p-12 rounded-2xl text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
+                    <Archive className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">No Concluded Classes Yet</h3>
+                    <p className="text-slate-500 text-sm mt-1">When your scheduled classes reach their duration or are ended by you, they will remain permanently visible here with full attendance reports.</p>
                   </div>
                 </div>
-              ))}
-            </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {concludedClasses.map(cls => (
+                    <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-start">
+                          {renderStatusBadge(cls.status)}
+                          <span className="text-xs font-semibold text-slate-600">
+                            Total Registrations: <strong className="text-slate-900 font-bold">{cls.enrolled_students?.length || 0}</strong>
+                          </span>
+                        </div>
+                        <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
+                        <p className="text-slate-500 text-sm">{cls.description}</p>
+                        <div className="flex items-center gap-3 text-xs text-slate-400">
+                          <span>Scheduled: {new Date(cls.start_time).toLocaleString()}</span>
+                          <span>•</span>
+                          <span>Duration: {cls.duration_minutes >= 999999 ? 'Self-Paced' : `${cls.duration_minutes}m`}</span>
+                        </div>
+                      </div>
+
+                      <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => handleOpenAttendance(cls.id)}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
+                          >
+                            <UserCheck className="w-4 h-4" /> View Attendance & Roster
+                          </button>
+                          <span className="bg-slate-100 text-slate-400 border border-slate-200 text-xs font-semibold px-3 py-2 rounded-xl select-none">
+                            Lecture Concluded
+                          </span>
+                        </div>
+
+                        <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition cursor-pointer" title="Delete class record">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
           </div>
         )}
 

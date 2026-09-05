@@ -256,31 +256,60 @@ export default function CourseDetail() {
                   <div className="p-3 bg-red-50 text-red-600 rounded-xl text-xs font-semibold">
                     You are the instructor of this class.
                   </div>
-                  <button 
-                    onClick={() => navigate(`/classroom/${classDetails.id}`)}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-md transition"
-                  >
-                    Enter Classroom as Host
-                  </button>
+                  {isEnded ? (
+                    <div className="space-y-2">
+                      <button 
+                        disabled 
+                        className="w-full bg-slate-200 text-slate-400 py-3.5 rounded-2xl font-bold text-sm cursor-not-allowed select-none"
+                      >
+                        Lecture Concluded
+                      </button>
+                      <button
+                        onClick={() => navigate('/dashboard')}
+                        className="w-full bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 py-2.5 rounded-xl font-semibold text-xs transition cursor-pointer"
+                      >
+                        View in Teacher Dashboard
+                      </button>
+                    </div>
+                  ) : (
+                    <button 
+                      onClick={() => navigate(`/classroom/${classDetails.id}`)}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-md transition"
+                    >
+                      Enter Classroom as Host
+                    </button>
+                  )}
                 </div>
               ) : isBooked ? (
                 <div className="space-y-3">
                   <div className="flex items-center justify-center gap-2 p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-2xl text-xs font-bold">
                     <Check className="w-4 h-4" /> You are enrolled in this lecture
                   </div>
-                  <button 
-                    onClick={() => navigate(`/classroom/${classDetails.id}`)}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-2"
-                  >
-                    <Video className="w-4 h-4" /> Enter Classroom
-                  </button>
-                  {!isEnded && (
-                    <button 
-                      onClick={handleCancelBooking}
-                      className="w-full bg-white hover:bg-red-50 border border-slate-200 text-red-600 py-2.5 rounded-xl font-semibold text-xs transition"
-                    >
-                      Cancel Reservation
-                    </button>
+                  {isEnded ? (
+                    <div className="space-y-2">
+                      <button 
+                        disabled
+                        className="w-full bg-slate-200 text-slate-400 py-3.5 rounded-2xl font-bold text-sm cursor-not-allowed select-none"
+                      >
+                        Lecture Concluded
+                      </button>
+                      <p className="text-xs text-slate-400">This class session has concluded.</p>
+                    </div>
+                  ) : (
+                    <>
+                      <button 
+                        onClick={() => navigate(`/classroom/${classDetails.id}`)}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-2"
+                      >
+                        <Video className="w-4 h-4" /> Enter Classroom
+                      </button>
+                      <button 
+                        onClick={handleCancelBooking}
+                        className="w-full bg-white hover:bg-red-50 border border-slate-200 text-red-600 py-2.5 rounded-xl font-semibold text-xs transition"
+                      >
+                        Cancel Reservation
+                      </button>
+                    </>
                   )}
                 </div>
               ) : isEnded ? (

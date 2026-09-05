@@ -10,6 +10,7 @@ export default function HomeCatalog() {
   const [classes, setClasses] = useState([]);
   const [stats, setStats] = useState({ students: 0, classes: 0, teachers: 0, hoursWatched: 0 });
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'active', 'concluded'
   const [viewMode, setViewMode] = useState('home'); // 'home' or 'courses'
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
@@ -75,10 +76,14 @@ export default function HomeCatalog() {
     navigate('/dashboard');
   };
 
-  const filteredClasses = classes.filter(cls => 
-    cls.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    cls.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredClasses = classes.filter(cls => {
+    const matchesSearch = cls.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      cls.description?.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!matchesSearch) return false;
+    if (statusFilter === 'active') return cls.status !== 'ended';
+    if (statusFilter === 'concluded') return cls.status === 'ended';
+    return true;
+  });
 
   const renderStatusBadge = (status) => {
     if (status === 'live') {
@@ -91,7 +96,8 @@ export default function HomeCatalog() {
     }
     if (status === 'ended') {
       return (
-        <span className="bg-slate-800 text-slate-300 text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+        <span className="bg-slate-900/90 text-slate-300 border border-slate-700 text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-sm flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-slate-400"></span>
           Concluded
         </span>
       );
@@ -295,73 +301,120 @@ export default function HomeCatalog() {
             <p className="text-slate-500 text-sm mt-1">Explore our comprehensive library of live classes taught by expert instructors.</p>
           </div>
 
-          {/* Search bar inside courses page */}
-          <div className="bg-white border border-slate-200 p-2 rounded-2xl shadow-sm flex items-center gap-2 max-w-xl">
-            <div className="pl-3 text-slate-400"><Search className="w-5 h-5" /></div>
-            <input 
-              type="text" 
-              placeholder="Search courses..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full py-2 px-1 focus:outline-none text-sm text-slate-800"
-            />
+          {/* Search bar and Filters inside courses page */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="bg-white border border-slate-200 p-2 rounded-2xl shadow-sm flex items-center gap-2 max-w-xl flex-1">
+              <div className="pl-3 text-slate-400"><Search className="w-5 h-5" /></div>
+              <input 
+                type="text" 
+                placeholder="Search courses..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full py-2 px-1 focus:outline-none text-sm text-slate-800"
+              />
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setStatusFilter('all')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  statusFilter === 'all'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All Classes ({classes.length})
+              </button>
+              <button
+                onClick={() => setStatusFilter('active')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  statusFilter === 'active'
+                    ? 'bg-red-600 text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Upcoming & Live ({classes.filter(c => c.status !== 'ended').length})
+              </button>
+              <button
+                onClick={() => setStatusFilter('concluded')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  statusFilter === 'concluded'
+                    ? 'bg-slate-700 text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Concluded ({classes.filter(c => c.status === 'ended').length})
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-4">
-            {filteredClasses.map((cls) => {
-              const isFull = cls.student_limit !== null && (cls.enrolled_count >= cls.student_limit);
-              const isEnded = cls.status === 'ended';
+            {filteredClasses.length === 0 ? (
+              <div className="col-span-full py-16 text-center text-slate-400 text-sm bg-slate-50 border border-slate-200 rounded-2xl">
+                No classes found matching your criteria.
+              </div>
+            ) : (
+              filteredClasses.map((cls) => {
+                const isFull = cls.student_limit !== null && (cls.enrolled_count >= cls.student_limit);
+                const isEnded = cls.status === 'ended';
 
-              return (
-                <div 
-                  key={cls.id} 
-                  onClick={() => navigate(`/course/${cls.id}`)}
-                  className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition flex flex-col justify-between group cursor-pointer"
-                >
-                  <div>
-                    <div className="h-48 bg-slate-900 relative overflow-hidden flex items-center justify-center text-white">
-                      <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
-                      <Video className="w-12 h-12 text-red-500 relative z-10 group-hover:scale-110 transition duration-300" />
-                      <div className="absolute top-4 right-4">
-                        {renderStatusBadge(cls.status)}
+                return (
+                  <div 
+                    key={cls.id} 
+                    onClick={() => navigate(`/course/${cls.id}`)}
+                    className={`${
+                      isEnded ? 'bg-slate-50/70 border-slate-300' : 'bg-white border-slate-200/80'
+                    } border rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition flex flex-col justify-between group cursor-pointer`}
+                  >
+                    <div>
+                      <div className="h-48 bg-slate-900 relative overflow-hidden flex items-center justify-center text-white">
+                        <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
+                        <Video className="w-12 h-12 text-red-500 relative z-10 group-hover:scale-110 transition duration-300" />
+                        <div className="absolute top-4 right-4">
+                          {renderStatusBadge(cls.status)}
+                        </div>
+                      </div>
+                      <div className="p-6 space-y-3">
+                        <h3 className="text-xl font-bold text-slate-900 group-hover:text-red-600 transition truncate">{cls.title}</h3>
+                        <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
+                        
+                        <div className="flex items-center justify-between text-xs font-medium text-slate-500 pt-2 border-t border-slate-100">
+                          <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-red-600" /> {cls.teacher_name}</span>
+                          <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString()}</span>
+                        </div>
                       </div>
                     </div>
-                    <div className="p-6 space-y-3">
-                      <h3 className="text-xl font-bold text-slate-900 group-hover:text-red-600 transition truncate">{cls.title}</h3>
-                      <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
-                      
-                      <div className="flex items-center justify-between text-xs font-medium text-slate-500 pt-2 border-t border-slate-100">
-                        <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-red-600" /> {cls.teacher_name}</span>
-                        <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString()}</span>
+
+                    <div className="p-6 pt-0 flex justify-between items-center border-t border-slate-100 mt-4">
+                      <div className="text-xs text-slate-500 font-medium">
+                        <span>{cls.enrolled_count || 0} {cls.student_limit ? `/ ${cls.student_limit}` : ''} Seats</span>
                       </div>
+
+                      {isEnded ? (
+                        <button 
+                          disabled
+                          className="text-xs bg-slate-100 text-slate-500 border border-slate-200 px-4 py-2 rounded-xl font-bold cursor-not-allowed select-none"
+                        >
+                          Concluded
+                        </button>
+                      ) : isFull ? (
+                        <span className="text-xs bg-slate-200 text-slate-500 px-4 py-2 rounded-xl font-semibold">
+                          Class Full
+                        </span>
+                      ) : (
+                        <button 
+                          onClick={(e) => handleBook(cls.id, e)}
+                          className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition cursor-pointer"
+                        >
+                          Book Seat
+                        </button>
+                      )}
                     </div>
                   </div>
-
-                  <div className="p-6 pt-0 flex justify-between items-center border-t border-slate-100 mt-4">
-                    <div className="text-xs text-slate-500 font-medium">
-                      <span>{cls.enrolled_count || 0} {cls.student_limit ? `/ ${cls.student_limit}` : ''} Seats</span>
-                    </div>
-
-                    {isEnded ? (
-                      <span className="text-xs bg-slate-100 text-slate-400 px-4 py-2 rounded-xl font-semibold">
-                        Concluded
-                      </span>
-                    ) : isFull ? (
-                      <span className="text-xs bg-slate-200 text-slate-500 px-4 py-2 rounded-xl font-semibold">
-                        Class Full
-                      </span>
-                    ) : (
-                      <button 
-                        onClick={(e) => handleBook(cls.id, e)}
-                        className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition cursor-pointer"
-                      >
-                        Book Seat
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </section>
       )}

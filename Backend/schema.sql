@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS class_bookings (
   id INT AUTO_INCREMENT PRIMARY KEY,
   student_id INT NOT NULL,
   class_id INT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  booked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (class_id) REFERENCES live_classes(id) ON DELETE CASCADE,
   UNIQUE KEY unique_booking (student_id, class_id),

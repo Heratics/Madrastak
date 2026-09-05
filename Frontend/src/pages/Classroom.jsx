@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { JitsiMeeting } from '@jitsi/react-sdk';
+import { JitsiMeeting, JaaSMeeting } from '@jitsi/react-sdk';
 import { AuthContext } from '../context/AuthContext';
 import { 
   GraduationCap, ArrowLeft, Video, Clock, AlertCircle, 
@@ -439,11 +439,9 @@ export default function Classroom() {
 
       {/* Embedded Jitsi Meeting Canvas */}
       <main className="flex-1 w-full h-full relative bg-slate-950">
-        {roomData?.meeting_room_id && (
-          <JitsiMeeting
-            domain={jitsiDomain}
-            roomName={roomData.meeting_room_id}
-            configOverwrite={{
+        {roomData?.meeting_room_id && (() => {
+          const commonProps = {
+            configOverwrite: {
               startWithAudioMuted: !roomData.isHost,
               startWithVideoMuted: false,
               disableDeepLinking: true,
@@ -456,20 +454,20 @@ export default function Classroom() {
               disableScreensharing: false,
               desktopSharingFrameRate: { min: 5, max: 30 },
               toolbarButtons: roomData.isHost ? teacherToolbar : studentToolbar
-            }}
-            interfaceConfigOverwrite={{
+            },
+            interfaceConfigOverwrite: {
               SHOW_JITSI_WATERMARK: false,
               SHOW_WATERMARK_FOR_GUESTS: false,
               TOOLBAR_ALWAYS_VISIBLE: true,
               DEFAULT_REMOTE_DISPLAY_NAME: roomData.isHost ? 'Student' : 'Participant'
-            }}
-            userInfo={{
+            },
+            userInfo: {
               displayName: user?.full_name 
                 ? `${user.full_name}${roomData.isHost ? ' (Instructor)' : ''}` 
                 : (roomData.isHost ? 'Instructor' : 'Student'),
               email: user?.email || ''
-            }}
-            onApiReady={(externalApi) => {
+            },
+            onApiReady: (externalApi) => {
               jitsiApiRef.current = externalApi;
 
               // Ensure display-capture and fullscreen permissions on Jitsi iframe
@@ -495,11 +493,11 @@ export default function Classroom() {
               externalApi.on('readyToClose', () => {
                 handleLeaveClassroom();
               });
-            }}
-            onReadyToClose={() => {
+            },
+            onReadyToClose: () => {
               handleLeaveClassroom();
-            }}
-            getIFrameRef={(parentRef) => {
+            },
+            getIFrameRef: (parentRef) => {
               if (parentRef) {
                 parentRef.style.height = '100%';
                 parentRef.style.width = '100%';
@@ -512,9 +510,28 @@ export default function Classroom() {
                   iframe.setAttribute('allowfullscreen', 'true');
                 }
               }
-            }}
-          />
-        )}
+            }
+          };
+
+          if (roomData.jaas?.jwt && roomData.jaas?.appId) {
+            return (
+              <JaaSMeeting
+                appId={roomData.jaas.appId}
+                roomName={roomData.meeting_room_id.toLowerCase()}
+                jwt={roomData.jaas.jwt}
+                {...commonProps}
+              />
+            );
+          }
+
+          return (
+            <JitsiMeeting
+              domain={jitsiDomain}
+              roomName={roomData.meeting_room_id}
+              {...commonProps}
+            />
+          );
+        })()}
       </main>
     </div>
   );

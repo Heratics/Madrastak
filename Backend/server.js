@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 require('dotenv').config();
 const db = require('./db');
+const { generateJaasToken } = require('./jaas');
 
 const app = express();
 
@@ -437,6 +438,19 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
       });
     }
 
+    // Generate JaaS token for authenticated user
+    let jaasData = null;
+    try {
+      jaasData = generateJaasToken({
+        user: req.user,
+        roomName: cls.meeting_room_id,
+        isTeacher,
+        durationMinutes: cls.duration_minutes
+      });
+    } catch (tokenErr) {
+      console.error('[JaaS] Failed to generate token for access request:', tokenErr.message);
+    }
+
     res.json({
       allowed: true,
       classId: cls.id,
@@ -447,7 +461,11 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
       isHost: isTeacher,
       duration_minutes: cls.duration_minutes,
       start_time: normalizeToIsoString(cls.start_time),
-      teacher_name: cls.teacher_name
+      teacher_name: cls.teacher_name,
+      jaas: jaasData ? {
+        appId: jaasData.appId,
+        jwt: jaasData.token
+      } : null
     });
   } catch (error) {
     console.error('Access check error:', error);

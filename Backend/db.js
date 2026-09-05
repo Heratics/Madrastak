@@ -10,6 +10,7 @@ const pool = mysql.createPool({
   ssl: {
     rejectUnauthorized: false
   },
+  timezone: '+00:00',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0

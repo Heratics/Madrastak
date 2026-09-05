@@ -216,7 +216,7 @@ export default function TeacherDashboard() {
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim(),
-          start_time: startTime,
+          start_time: new Date(startTime).toISOString(),
           duration_minutes: finalDuration,
           student_limit: studentLimit
         })
@@ -234,6 +234,21 @@ export default function TeacherDashboard() {
     } catch (err) {
       showToast(err.message, 'error');
     }
+  };
+
+  const handleStartClass = async (classId, currentStatus) => {
+    try {
+      if (currentStatus === 'scheduled') {
+        const currentToken = localStorage.getItem('token') || token;
+        await fetch(`${API_URL}/api/classes/${classId}/start`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+      }
+    } catch (e) {
+      console.error('Error starting class:', e);
+    }
+    navigate(`/classroom/${classId}`);
   };
 
   const handleDeleteClass = async (classId) => {
@@ -564,13 +579,13 @@ export default function TeacherDashboard() {
                         </div>
                         <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
                         <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
-                        <p className="text-xs text-slate-400">Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
+                        <p className="text-xs text-slate-400">Scheduled: {new Date(cls.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
                       </div>
 
                       <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
                         <div className="flex items-center gap-2">
                           <button 
-                            onClick={() => navigate(`/classroom/${cls.id}`)}
+                            onClick={() => handleStartClass(cls.id, cls.status)}
                             className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
                           >
                             <Video className="w-4 h-4" /> 
@@ -628,7 +643,7 @@ export default function TeacherDashboard() {
                         </div>
                         <h3 className="text-lg font-bold text-slate-800">{cls.title}</h3>
                         <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
-                        <p className="text-xs text-slate-400">Ended session • Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
+                        <p className="text-xs text-slate-400">Ended session • Scheduled: {new Date(cls.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
                       </div>
 
                       <div className="pt-4 border-t border-slate-200/60 flex flex-wrap justify-between items-center gap-2">
@@ -710,13 +725,13 @@ export default function TeacherDashboard() {
                         </div>
                         <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
                         <p className="text-slate-500 text-sm">{cls.description}</p>
-                        <p className="text-xs text-slate-500 font-medium">Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
+                        <p className="text-xs text-slate-500 font-medium">Scheduled: {new Date(cls.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
                       </div>
 
                       <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
                         <div className="flex items-center gap-2">
                           <button 
-                            onClick={() => navigate(`/classroom/${cls.id}`)}
+                            onClick={() => handleStartClass(cls.id, cls.status)}
                             className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
                           >
                             <Video className="w-4 h-4" /> 
@@ -766,7 +781,7 @@ export default function TeacherDashboard() {
                         <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
                         <p className="text-slate-500 text-sm">{cls.description}</p>
                         <div className="flex items-center gap-3 text-xs text-slate-400">
-                          <span>Scheduled: {new Date(cls.start_time).toLocaleString()}</span>
+                          <span>Scheduled: {new Date(cls.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
                           <span>•</span>
                           <span>Duration: {cls.duration_minutes >= 999999 ? 'Self-Paced' : `${cls.duration_minutes}m`}</span>
                         </div>

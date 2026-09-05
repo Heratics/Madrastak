@@ -14,6 +14,7 @@ export default function Classroom() {
   const { user } = useContext(AuthContext);
 
   const [roomData, setRoomData] = useState(null);
+  const [waitingState, setWaitingState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sessionId, setSessionId] = useState(null);
@@ -25,8 +26,8 @@ export default function Classroom() {
   const token = localStorage.getItem('token');
 
   // 1. Authorize user and retrieve meeting credentials
-  const fetchRoomAccess = async () => {
-    setLoading(true);
+  const fetchRoomAccess = async (isSilentPoll = false) => {
+    if (!isSilentPoll) setLoading(true);
     setError(null);
 
     try {
@@ -39,14 +40,22 @@ export default function Classroom() {
       const data = await res.json();
 
       if (!res.ok) {
+        if (data.status === 'scheduled') {
+          // Dedicated Waiting Room for students before professor starts
+          setWaitingState(data);
+          setRoomData(null);
+          return;
+        }
         throw new Error(data.message || 'Access verification failed.');
       }
 
+      setWaitingState(null);
       setRoomData(data);
     } catch (err) {
+      setWaitingState(null);
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (!isSilentPoll) setLoading(false);
     }
   };
 
@@ -63,6 +72,16 @@ export default function Classroom() {
       }
     };
   }, [id]);
+
+  // Auto-poll access every 8 seconds while student is in waiting room
+  useEffect(() => {
+    if (waitingState) {
+      const pollInterval = setInterval(() => {
+        fetchRoomAccess(true);
+      }, 8000);
+      return () => clearInterval(pollInterval);
+    }
+  }, [waitingState, id]);
 
   // 2. Attendance tracking & End-of-lecture detection: Heartbeat every 20 seconds
   useEffect(() => {
@@ -231,6 +250,69 @@ export default function Classroom() {
     );
   }
 
+  // Scheduled / Waiting for Instructor State
+  if (waitingState) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-lg w-full bg-slate-900 border border-slate-800 p-8 rounded-3xl space-y-6 shadow-2xl animate-fade-in">
+          <div className="w-16 h-16 bg-amber-500/10 text-amber-400 rounded-2xl flex items-center justify-center mx-auto border border-amber-500/20">
+            <Clock className="w-8 h-8 animate-pulse" />
+          </div>
+
+          <div className="space-y-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              Waiting for Instructor
+            </span>
+            <h2 className="text-2xl font-black text-white">{waitingState.title || 'Virtual Lecture'}</h2>
+            <p className="text-slate-300 text-sm leading-relaxed">
+              {waitingState.message || 'The lecture has not started yet. Please wait for your instructor.'}
+            </p>
+          </div>
+
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-2xl p-4 text-xs text-slate-400 space-y-2.5 text-left">
+            {waitingState.teacher_name && (
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Instructor:</span>
+                <span className="text-slate-200 font-semibold">{waitingState.teacher_name}</span>
+              </div>
+            )}
+            {waitingState.start_time && (
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Scheduled Time:</span>
+                <span className="text-slate-200 font-semibold">
+                  {new Date(waitingState.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between items-center pt-2 border-t border-slate-800/60">
+              <span className="text-slate-500">Status:</span>
+              <span className="text-amber-400 font-medium flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                Auto-connecting when instructor starts...
+              </span>
+            </div>
+          </div>
+
+          <div className="pt-2 flex flex-col gap-3">
+            <button 
+              onClick={() => fetchRoomAccess()} 
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-semibold text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20"
+            >
+              <Loader2 className="w-4 h-4 animate-spin" /> Check if Started
+            </button>
+            <button 
+              onClick={() => navigate('/dashboard')} 
+              className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl font-semibold text-sm transition cursor-pointer"
+            >
+              Return to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Error / Unauthorized / Ended State
   if (error) {
     return (
@@ -266,16 +348,17 @@ export default function Classroom() {
 
   // Toolbar options tailored to host vs student
   const teacherToolbar = [
-    'camera', 'chat', 'closedcaptions', 'desktop', 'fullscreen', 
-    'hangup', 'microphone', 'mute-everyone', 'mute-video-everyone', 
-    'participants-pane', 'profile', 'raisehand', 'recording', 
-    'select-background', 'settings', 'tileview', 'toggle-camera', 'videoquality'
+    'camera', 'microphone', 'desktop', 'screenshare', 'chat', 
+    'closedcaptions', 'fullscreen', 'hangup', 'mute-everyone', 
+    'mute-video-everyone', 'participants-pane', 'profile', 
+    'raisehand', 'recording', 'select-background', 'settings', 
+    'tileview', 'toggle-camera', 'videoquality'
   ];
 
   const studentToolbar = [
-    'camera', 'chat', 'closedcaptions', 'desktop', 'fullscreen', 
-    'hangup', 'microphone', 'profile', 'raisehand', 
-    'select-background', 'settings', 'tileview', 'toggle-camera', 'videoquality'
+    'camera', 'microphone', 'chat', 'closedcaptions', 'fullscreen', 
+    'hangup', 'profile', 'raisehand', 'select-background', 
+    'settings', 'tileview', 'toggle-camera', 'videoquality'
   ];
 
   return (
@@ -364,10 +447,14 @@ export default function Classroom() {
               startWithAudioMuted: !roomData.isHost,
               startWithVideoMuted: false,
               disableDeepLinking: true,
+              prejoinConfig: { enabled: false },
               prejoinPageEnabled: false,
               enableWelcomePage: false,
               disableInviteFunctions: true,
               disableModeratorIndicator: false,
+              enableScreensharing: true,
+              disableScreensharing: false,
+              desktopSharingFrameRate: { min: 5, max: 30 },
               toolbarButtons: roomData.isHost ? teacherToolbar : studentToolbar
             }}
             interfaceConfigOverwrite={{
@@ -377,11 +464,22 @@ export default function Classroom() {
               DEFAULT_REMOTE_DISPLAY_NAME: roomData.isHost ? 'Student' : 'Participant'
             }}
             userInfo={{
-              displayName: user?.full_name || (roomData.isHost ? 'Instructor' : 'Student'),
+              displayName: user?.full_name 
+                ? `${user.full_name}${roomData.isHost ? ' (Instructor)' : ''}` 
+                : (roomData.isHost ? 'Instructor' : 'Student'),
               email: user?.email || ''
             }}
             onApiReady={(externalApi) => {
               jitsiApiRef.current = externalApi;
+
+              // Ensure display-capture and fullscreen permissions on Jitsi iframe
+              try {
+                const iframe = externalApi.getIFrame();
+                if (iframe) {
+                  iframe.setAttribute('allow', 'camera *; microphone *; display-capture *; autoplay *; clipboard-write *; screen-wake-lock *');
+                  iframe.setAttribute('allowfullscreen', 'true');
+                }
+              } catch (e) {}
 
               // Event: Successfully entered call
               externalApi.on('videoConferenceJoined', () => {
@@ -401,11 +499,18 @@ export default function Classroom() {
             onReadyToClose={() => {
               handleLeaveClassroom();
             }}
-            getIFrameRef={(iframeRef) => {
-              if (iframeRef) {
-                iframeRef.style.height = '100%';
-                iframeRef.style.width = '100%';
-                iframeRef.style.border = 'none';
+            getIFrameRef={(parentRef) => {
+              if (parentRef) {
+                parentRef.style.height = '100%';
+                parentRef.style.width = '100%';
+                const iframe = parentRef.querySelector('iframe');
+                if (iframe) {
+                  iframe.style.height = '100%';
+                  iframe.style.width = '100%';
+                  iframe.style.border = 'none';
+                  iframe.setAttribute('allow', 'camera *; microphone *; display-capture *; autoplay *; clipboard-write *; screen-wake-lock *');
+                  iframe.setAttribute('allowfullscreen', 'true');
+                }
               }
             }}
           />

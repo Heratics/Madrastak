@@ -104,6 +104,21 @@ export default function CourseDetail() {
     }
   };
 
+  const handleHostStart = async () => {
+    try {
+      if (classDetails?.status === 'scheduled') {
+        const currentToken = localStorage.getItem('token') || token;
+        await fetch(`${API_URL}/api/classes/${classDetails.id}/start`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+      }
+    } catch (e) {
+      console.error('Error starting class:', e);
+    }
+    navigate(`/classroom/${classDetails.id}`);
+  };
+
   if (loading) {
     return <div className="min-h-screen bg-white flex items-center justify-center text-slate-500 font-medium">Loading course details...</div>;
   }
@@ -186,7 +201,7 @@ export default function CourseDetail() {
           <div className="relative z-10 flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800 text-sm font-medium text-slate-300">
             <span className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-red-500" /> 
-              {new Date(classDetails.start_time).toLocaleString()}
+              {new Date(classDetails.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
             </span>
             <span className="flex items-center gap-2">
               <Video className="w-4 h-4 text-red-500" /> 
@@ -273,10 +288,10 @@ export default function CourseDetail() {
                     </div>
                   ) : (
                     <button 
-                      onClick={() => navigate(`/classroom/${classDetails.id}`)}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-md transition"
+                      onClick={handleHostStart}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-md transition cursor-pointer"
                     >
-                      Enter Classroom as Host
+                      {classDetails.status === 'live' ? 'Enter Live Classroom' : 'Start Virtual Session as Host'}
                     </button>
                   )}
                 </div>

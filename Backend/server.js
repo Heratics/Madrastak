@@ -69,13 +69,41 @@ function validateClassInput({ title, description, start_time, duration_minutes, 
 }
 
 /**
+ * Ensures any date/datetime representation (Date object, UTC string, or MySQL DATETIME)
+ * is normalized to a valid ISO 8601 string with UTC indicator 'Z'.
+ */
+function normalizeToIsoString(dt) {
+  if (!dt) return null;
+  if (dt instanceof Date) {
+    return isNaN(dt.getTime()) ? null : dt.toISOString();
+  }
+  if (typeof dt === 'string') {
+    // If it already contains timezone indicators ('Z' or +HH:mm / -HH:mm)
+    if (dt.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(dt)) {
+      const parsed = new Date(dt);
+      return isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    }
+    // MySQL format: 'YYYY-MM-DD HH:mm:ss' stored as UTC
+    const utcParsed = new Date(dt.replace(' ', 'T') + 'Z');
+    if (!isNaN(utcParsed.getTime())) {
+      return utcParsed.toISOString();
+    }
+    const fallback = new Date(dt);
+    return isNaN(fallback.getTime()) ? null : fallback.toISOString();
+  }
+  const fallback = new Date(dt);
+  return isNaN(fallback.getTime()) ? null : fallback.toISOString();
+}
+
+/**
  * Computes the real-time lecture status (scheduled, live, ended) based on time and manual overrides.
  * Automatically updates the database when an active/scheduled class has ended.
  */
 function evaluateClassStatus(cls) {
   if (cls.status === 'ended') return 'ended';
 
-  const startTime = new Date(cls.start_time).getTime();
+  const normalized = normalizeToIsoString(cls.start_time);
+  const startTime = normalized ? new Date(normalized).getTime() : NaN;
   if (isNaN(startTime)) return 'scheduled';
 
   const durationMinutes = Number(cls.duration_minutes) || 60;
@@ -225,7 +253,8 @@ app.post('/api/classes', verifyToken, async (req, res) => {
     return res.status(400).json({ message: validation.error });
   }
 
-  const mysql_start_time = new Date(start_time).toISOString().slice(0, 19).replace('T', ' ');
+  const startIso = normalizeToIsoString(start_time);
+  const mysql_start_time = new Date(startIso).toISOString().slice(0, 19).replace('T', ' ');
   const meeting_room_id = `Madrastak-${crypto.randomUUID()}`;
 
   try {
@@ -326,6 +355,7 @@ app.get('/api/classes', async (req, res) => {
       delete cls.meeting_room_id; // SECURITY: Never expose meeting_room_id in public class lists
       if (cls.student_limit === undefined) cls.student_limit = null;
       cls.status = evaluateClassStatus(cls);
+      cls.start_time = normalizeToIsoString(cls.start_time);
     }
 
     res.json(classes);
@@ -395,18 +425,16 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
       cls.status = 'live';
     }
 
-    // If student attempts to enter when scheduled and it's too early (>15 mins prior)
+    // Students must not enter before the professor starts the lecture
     if (!isTeacher && cls.status === 'scheduled') {
-      const startTime = new Date(cls.start_time).getTime();
-      const fifteenMinutesBefore = startTime - (15 * 60 * 1000);
-      if (Date.now() < fifteenMinutesBefore) {
-        return res.status(403).json({
-          allowed: false,
-          status: 'scheduled',
-          start_time: cls.start_time,
-          message: 'Classroom is scheduled. It will open 15 minutes prior to the start time or once the instructor begins the session.'
-        });
-      }
+      return res.status(403).json({
+        allowed: false,
+        status: 'scheduled',
+        start_time: normalizeToIsoString(cls.start_time),
+        teacher_name: cls.teacher_name,
+        title: cls.title,
+        message: 'The lecture has not started yet. Please wait for your instructor.'
+      });
     }
 
     res.json({
@@ -418,7 +446,7 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
       status: cls.status,
       isHost: isTeacher,
       duration_minutes: cls.duration_minutes,
-      start_time: cls.start_time,
+      start_time: normalizeToIsoString(cls.start_time),
       teacher_name: cls.teacher_name
     });
   } catch (error) {
@@ -497,6 +525,7 @@ app.get('/api/teacher/classes', verifyToken, async (req, res) => {
     for (let cls of classes) {
       if (cls.student_limit === undefined) cls.student_limit = null;
       cls.status = evaluateClassStatus(cls);
+      cls.start_time = normalizeToIsoString(cls.start_time);
 
       // Safe query: select standard user columns + cb.booked_at from bookings
       try {
@@ -694,6 +723,7 @@ app.get('/api/student/bookings', verifyToken, async (req, res) => {
     for (let b of bookings) {
       if (b.student_limit === undefined) b.student_limit = null;
       b.status = evaluateClassStatus(b);
+      b.start_time = normalizeToIsoString(b.start_time);
     }
 
     res.json(bookings);

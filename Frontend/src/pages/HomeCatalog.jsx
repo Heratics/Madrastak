@@ -260,7 +260,7 @@ export default function HomeCatalog() {
                         
                         <div className="flex items-center justify-between text-xs font-medium text-slate-500 pt-2 border-t border-slate-100">
                           <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-red-600" /> {cls.teacher_name}</span>
-                          <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString()}</span>
+                          <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString([], { month: 'short', day: 'numeric' })} • {new Date(cls.start_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
                         </div>
                       </div>
                     </div>
@@ -381,7 +381,7 @@ export default function HomeCatalog() {
                         
                         <div className="flex items-center justify-between text-xs font-medium text-slate-500 pt-2 border-t border-slate-100">
                           <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-red-600" /> {cls.teacher_name}</span>
-                          <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString()}</span>
+                          <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString([], { month: 'short', day: 'numeric' })} • {new Date(cls.start_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
                         </div>
                       </div>
                     </div>

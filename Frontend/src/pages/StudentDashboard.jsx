@@ -238,7 +238,7 @@ export default function StudentDashboard() {
 
                       <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
                         <span className="text-xs text-slate-500 font-medium">
-                          {new Date(cls.start_time).toLocaleString()}
+                          {new Date(cls.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
                         </span>
 
                         <div className="flex items-center gap-2">
@@ -248,7 +248,7 @@ export default function StudentDashboard() {
                               cls.status === 'live'
                                 ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/25 animate-pulse'
                                 : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
-                            } px-4 py-2 rounded-xl text-xs font-semibold shadow-md transition flex items-center gap-1.5`}
+                            } px-4 py-2 rounded-xl text-xs font-semibold shadow-md transition flex items-center gap-1.5 cursor-pointer`}
                           >
                             <Video className="w-4 h-4" /> 
                             {cls.status === 'live' ? 'Join Live Now' : 'Enter Classroom'}
@@ -308,15 +308,15 @@ export default function StudentDashboard() {
                       </div>
 
                       <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
-                        <span className="text-xs text-slate-500">{new Date(cls.start_time).toLocaleString()}</span>
+                        <span className="text-xs text-slate-500">{new Date(cls.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
                         <div className="flex items-center gap-2">
                           <button 
                             onClick={() => navigate(`/classroom/${cls.id}`)}
                             className={`${
                               cls.status === 'live' 
-                                ? 'bg-red-600 hover:bg-red-700 text-white' 
-                                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                            } px-4 py-2 rounded-xl text-xs font-semibold transition`}
+                                ? 'bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-600/25 animate-pulse' 
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20'
+                            } px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer`}
                           >
                             {cls.status === 'live' ? 'Join Live Now' : 'Enter Classroom'}
                           </button>
@@ -350,7 +350,7 @@ export default function StudentDashboard() {
                         <p className="text-slate-500 text-sm">{cls.description}</p>
                       </div>
                       <div className="pt-4 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
-                        <span>Scheduled on: {new Date(cls.start_time).toLocaleDateString()}</span>
+                        <span>Scheduled on: {new Date(cls.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
                         <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-lg font-medium">Archived</span>
                       </div>
                     </div>

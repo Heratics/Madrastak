@@ -113,7 +113,7 @@ function evaluateClassStatus(cls) {
     const endTime = startTime + (durationMinutes * 60 * 1000);
     if (now >= endTime) {
       // Safe async update only if status column exists
-      db.query('UPDATE live_classes SET status = "ended" WHERE id = ?', [cls.id]).catch(() => {});
+      db.query('UPDATE live_classes SET status = ? WHERE id = ?', ['ended', cls.id]).catch(() => {});
       return 'ended';
     }
   }
@@ -394,7 +394,7 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
     const currentStatus = evaluateClassStatus(cls);
     cls.status = currentStatus;
 
-    const isTeacher = (req.user.id === cls.teacher_id || req.user.role === 'admin');
+    const isTeacher = (Number(req.user.id) === Number(cls.teacher_id) || req.user.role === 'admin');
 
     if (!isTeacher) {
       const [booking] = await db.query(
@@ -420,8 +420,12 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
 
     // If scheduled and user is teacher, entering can auto-start lecture
     if (isTeacher && cls.status === 'scheduled') {
-      await db.query('UPDATE live_classes SET status = "live" WHERE id = ?', [classId]).catch(() => {});
-      cls.status = 'live';
+      try {
+        await db.query('UPDATE live_classes SET status = ? WHERE id = ?', ['live', classId]);
+        cls.status = 'live';
+      } catch (err) {
+        console.error('[ClassAccess] Failed to auto-start class:', err.message);
+      }
     }
 
     // Students must not enter before the professor starts the lecture
@@ -488,11 +492,11 @@ app.post('/api/classes/:id/start', verifyToken, async (req, res) => {
     const [rows] = await db.query('SELECT teacher_id, status FROM live_classes WHERE id = ?', [classId]);
     if (rows.length === 0) return res.status(404).json({ message: 'Class not found.' });
 
-    if (rows[0].teacher_id !== req.user.id && req.user.role !== 'admin') {
+    if (Number(rows[0].teacher_id) !== Number(req.user.id) && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
-    await db.query('UPDATE live_classes SET status = "live" WHERE id = ?', [classId]).catch(() => {});
+    await db.query('UPDATE live_classes SET status = ? WHERE id = ?', ['live', classId]);
     res.json({ message: 'Lecture is now live!', status: 'live' });
   } catch (error) {
     console.error('Start class error:', error);
@@ -508,11 +512,11 @@ app.post('/api/classes/:id/end', verifyToken, async (req, res) => {
     const [rows] = await db.query('SELECT teacher_id, status FROM live_classes WHERE id = ?', [classId]);
     if (rows.length === 0) return res.status(404).json({ message: 'Class not found.' });
 
-    if (rows[0].teacher_id !== req.user.id && req.user.role !== 'admin') {
+    if (Number(rows[0].teacher_id) !== Number(req.user.id) && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
-    await db.query('UPDATE live_classes SET status = "ended" WHERE id = ?', [classId]).catch(() => {});
+    await db.query('UPDATE live_classes SET status = ? WHERE id = ?', ['ended', classId]);
 
     // Finalize open attendance records if table exists
     await db.query(`

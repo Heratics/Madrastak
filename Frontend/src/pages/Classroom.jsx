@@ -73,15 +73,18 @@ export default function Classroom() {
     };
   }, [id]);
 
-  // Auto-poll access every 8 seconds while student is in waiting room
+  // Auto-poll access every 4 seconds while student is in waiting room
   useEffect(() => {
+    let pollInterval = null;
     if (waitingState) {
-      const pollInterval = setInterval(() => {
+      pollInterval = setInterval(() => {
         fetchRoomAccess(true);
-      }, 8000);
-      return () => clearInterval(pollInterval);
+      }, 4000);
     }
-  }, [waitingState, id]);
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [Boolean(waitingState), id]);
 
   // 2. Attendance tracking & End-of-lecture detection: Heartbeat every 20 seconds
   useEffect(() => {

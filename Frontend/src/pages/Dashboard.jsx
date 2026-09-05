@@ -3,7 +3,8 @@ import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, BookOpen, PlusCircle, User, Settings, 
-  LogOut, Video, Users, Clock, Trash2, CheckCircle, GraduationCap, X, AlertCircle, Camera 
+  LogOut, Video, Users, Clock, Trash2, CheckCircle, GraduationCap, 
+  X, AlertCircle, Camera, UserCheck, Calendar, ShieldAlert 
 } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -16,6 +17,14 @@ export default function TeacherDashboard() {
   // Custom Toast Popup State
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
+  // Attendance Modal State
+  const [attendanceModal, setAttendanceModal] = useState({ 
+    open: false, 
+    loading: false, 
+    data: null, 
+    error: null 
+  });
+
   // Create Class Form State
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -24,7 +33,7 @@ export default function TeacherDashboard() {
   const [durationMinutes, setDurationMinutes] = useState('60');
   const [studentLimit, setStudentLimit] = useState('25');
 
-// Profile & Settings State
+  // Profile & Settings State
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [bio, setBio] = useState('');
   const [profilePicPreview, setProfilePicPreview] = useState('');
@@ -55,7 +64,6 @@ export default function TeacherDashboard() {
   useEffect(() => {
     fetchTeacherClasses();
 
-    // Fetch fresh profile data so bio and profile picture don't blank out on reload
     fetch(`${API_URL}/api/user/profile`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
@@ -70,12 +78,31 @@ export default function TeacherDashboard() {
       .catch(err => console.error(err));
   }, []);
 
+  // Fetch Attendance Roster for Modal
+  const handleOpenAttendance = async (classId) => {
+    setAttendanceModal({ open: true, loading: true, data: null, error: null });
+    try {
+      const res = await fetch(`${API_URL}/api/teacher/classes/${classId}/attendance`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to retrieve attendance roster');
+      setAttendanceModal({ open: true, loading: false, data, error: null });
+    } catch (err) {
+      setAttendanceModal({ open: true, loading: false, data: null, error: err.message });
+    }
+  };
+
   // Cloudinary Widget Integration
   const openCloudinaryWidget = () => {
+    if (!window.cloudinary) {
+      showToast('Cloudinary widget not loaded. Please refresh.', 'error');
+      return;
+    }
     window.cloudinary.createUploadWidget(
       {
-        cloudName: 'vspcdig8', // Replace with your actual Cloudinary cloud name if different
-        uploadPreset: 'madrastak', // Replace with your actual Cloudinary unsigned upload preset name
+        cloudName: 'vspcdig8',
+        uploadPreset: 'madrastak',
         sources: ['local', 'url', 'camera'],
         multiple: false,
         cropping: true,
@@ -91,7 +118,7 @@ export default function TeacherDashboard() {
     ).open();
   };
 
-const handleSaveProfile = async (e) => {
+  const handleSaveProfile = async (e) => {
     e.preventDefault();
     try {
       const res = await fetch(`${API_URL}/api/teacher/profile`, {
@@ -106,8 +133,6 @@ const handleSaveProfile = async (e) => {
       if (!res.ok) throw new Error(data.message);
       
       showToast('Profile updated successfully!');
-      
-      // Instantly update user context object locally if available
       if (user) {
         user.full_name = fullName;
         user.bio = bio;
@@ -141,7 +166,34 @@ const handleSaveProfile = async (e) => {
 
   const handleCreateClass = async (e) => {
     e.preventDefault();
+
+    // Frontend validation before submission
+    if (!title.trim() || title.trim().length < 3) {
+      showToast('Class title must be at least 3 characters long.', 'error');
+      return;
+    }
+
+    if (!description.trim() || description.trim().length < 5) {
+      showToast('Please provide a brief description of the class.', 'error');
+      return;
+    }
+
+    if (!startTime) {
+      showToast('Please select a scheduled start date and time.', 'error');
+      return;
+    }
+
+    const startTimestamp = new Date(startTime).getTime();
+    if (startTimestamp < Date.now() - (5 * 60 * 1000)) {
+      showToast('Class start time cannot be in the past.', 'error');
+      return;
+    }
+
     const finalDuration = isNoLimitDuration ? 999999 : parseInt(durationMinutes);
+    if (!isNoLimitDuration && (!finalDuration || finalDuration <= 0)) {
+      showToast('Duration must be a positive number of minutes.', 'error');
+      return;
+    }
 
     try {
       const res = await fetch(`${API_URL}/api/classes`, {
@@ -151,8 +203,8 @@ const handleSaveProfile = async (e) => {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          title,
-          description,
+          title: title.trim(),
+          description: description.trim(),
           start_time: startTime,
           duration_minutes: finalDuration,
           student_limit: studentLimit
@@ -187,6 +239,31 @@ const handleSaveProfile = async (e) => {
     }
   };
 
+  const renderStatusBadge = (status) => {
+    if (status === 'live') {
+      return (
+        <span className="bg-red-50 text-red-600 border border-red-200 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-sm shadow-red-100">
+          <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span> Live Now
+        </span>
+      );
+    }
+    if (status === 'ended') {
+      return (
+        <span className="bg-slate-100 text-slate-600 border border-slate-200 text-xs font-bold px-3 py-1 rounded-full">
+          Concluded
+        </span>
+      );
+    }
+    return (
+      <span className="bg-blue-50 text-blue-600 border border-blue-200 text-xs font-bold px-3 py-1 rounded-full">
+        Scheduled
+      </span>
+    );
+  };
+
+  // Min date for datetime-local input (current minute)
+  const minDateTime = new Date(Date.now() - (60 * 1000)).toISOString().slice(0, 16);
+
   return (
     <div className="min-h-screen bg-slate-50 flex relative">
       {/* Custom In-App Toast Popup */}
@@ -199,6 +276,111 @@ const handleSaveProfile = async (e) => {
           <button onClick={() => setToast({ show: false, message: '', type: 'success' })} className="ml-2 text-white/70 hover:text-white">
             <X className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Attendance Roster Modal */}
+      {attendanceModal.open && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div>
+                <h3 className="text-lg font-black text-slate-900">
+                  {attendanceModal.data?.title || 'Attendance & Session Roster'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Verified student participation tracking for this lecture.
+                </p>
+              </div>
+              <button 
+                onClick={() => setAttendanceModal({ open: false, loading: false, data: null, error: null })}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              {attendanceModal.loading ? (
+                <div className="py-12 text-center text-slate-500 font-medium text-sm">
+                  Loading attendance records...
+                </div>
+              ) : attendanceModal.error ? (
+                <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 shrink-0" />
+                  <span>{attendanceModal.error}</span>
+                </div>
+              ) : attendanceModal.data?.roster?.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 text-sm">
+                  No students have booked or joined this lecture yet.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Summary Bar */}
+                  <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 text-center">
+                    <div>
+                      <p className="text-2xl font-black text-slate-900">{attendanceModal.data?.totalBooked || 0}</p>
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Booked Students</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-black text-emerald-600">{attendanceModal.data?.totalAttended || 0}</p>
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Actually Attended</p>
+                    </div>
+                  </div>
+
+                  {/* Student Table */}
+                  <div className="border border-slate-100 rounded-2xl overflow-hidden">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+                        <tr>
+                          <th className="p-3.5">Student</th>
+                          <th className="p-3.5">Status</th>
+                          <th className="p-3.5">Time in Session</th>
+                          <th className="p-3.5">First Joined</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {attendanceModal.data?.roster?.map((student) => (
+                          <tr key={student.student_id} className="hover:bg-slate-50/80 transition">
+                            <td className="p-3.5 font-medium">
+                              <p className="text-slate-900 font-bold">{student.full_name}</p>
+                              <p className="text-slate-400 text-[11px]">{student.email}</p>
+                            </td>
+                            <td className="p-3.5">
+                              {student.attended ? (
+                                <span className="bg-emerald-50 text-emerald-600 border border-emerald-200 font-bold px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
+                                  <UserCheck className="w-3 h-3" /> Attended
+                                </span>
+                              ) : (
+                                <span className="bg-slate-100 text-slate-400 font-medium px-2.5 py-0.5 rounded-full inline-block">
+                                  Absent
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3.5 font-semibold text-slate-900">
+                              {student.attended ? `${student.total_duration_minutes} mins` : '—'}
+                            </td>
+                            <td className="p-3.5 text-slate-500">
+                              {student.first_joined_at ? new Date(student.first_joined_at).toLocaleTimeString() : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+              <button 
+                onClick={() => setAttendanceModal({ open: false, loading: false, data: null, error: null })}
+                className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2 rounded-xl text-xs font-semibold transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -268,8 +450,8 @@ const handleSaveProfile = async (e) => {
               </div>
               <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
                 <div className="text-blue-600"><Video className="w-6 h-6" /></div>
-                <h3 className="text-3xl font-black text-slate-900">{classes.filter(c => new Date(c.start_time) > new Date()).length}</h3>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upcoming Live Sessions</p>
+                <h3 className="text-3xl font-black text-slate-900">{classes.filter(c => c.status !== 'ended').length}</h3>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upcoming & Active Sessions</p>
               </div>
             </div>
 
@@ -285,24 +467,43 @@ const handleSaveProfile = async (e) => {
                     <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
                       <div className="space-y-2">
                         <div className="flex justify-between items-start">
-                          <span className="bg-red-50 text-red-600 text-xs font-bold px-3 py-1 rounded-full">Virtual Classroom</span>
-                          <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full flex items-center gap-1">
-                            <Users className="w-3.5 h-3.5" /> {cls.enrolled_students?.length || 0} Students Registered
+                          <div className="flex items-center gap-2">
+                            {renderStatusBadge(cls.status)}
+                            <span className="bg-slate-50 text-slate-600 text-xs font-bold px-3 py-1 rounded-full border border-slate-200">
+                              Virtual Classroom
+                            </span>
+                          </div>
+                          <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full flex items-center gap-1 border border-emerald-100">
+                            <Users className="w-3.5 h-3.5" /> 
+                            {cls.enrolled_students?.length || 0} {cls.student_limit ? `/ ${cls.student_limit}` : ''} Students
                           </span>
                         </div>
                         <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
                         <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
                         <p className="text-xs text-slate-400">Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
                       </div>
-                      <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
-                        <a 
-                          href={`https://meet.jit.si/${cls.meeting_room_id}`} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
-                        >
-                          <Video className="w-4 h-4" /> Start Virtual Session
-                        </a>
+
+                      <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => navigate(`/classroom/${cls.id}`)}
+                            disabled={cls.status === 'ended'}
+                            className={`${
+                              cls.status === 'ended' 
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20'
+                            } px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5`}
+                          >
+                            <Video className="w-4 h-4" /> 
+                            {cls.status === 'live' ? 'Join Live Session' : cls.status === 'ended' ? 'Class Ended' : 'Start Virtual Session'}
+                          </button>
+                          <button 
+                            onClick={() => handleOpenAttendance(cls.id)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
+                          >
+                            <UserCheck className="w-3.5 h-3.5 text-slate-500" /> Attendance
+                          </button>
+                        </div>
                         <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition">
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -320,15 +521,42 @@ const handleSaveProfile = async (e) => {
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {classes.map(cls => (
-                <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4">
+                <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
                   <div className="space-y-2">
+                    <div className="flex justify-between items-start">
+                      {renderStatusBadge(cls.status)}
+                      <span className="text-xs font-semibold text-slate-600">
+                        Capacity: <strong className="text-red-600 font-bold">{cls.enrolled_students?.length || 0}</strong> {cls.student_limit ? `/ ${cls.student_limit}` : '(No limit)'}
+                      </span>
+                    </div>
                     <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
                     <p className="text-slate-500 text-sm">{cls.description}</p>
-                    <p className="text-xs font-semibold text-slate-600">Students Registered: <span className="text-red-600 font-bold">{cls.enrolled_students?.length || 0}</span></p>
+                    <p className="text-xs text-slate-500 font-medium">Scheduled: {new Date(cls.start_time).toLocaleString()}</p>
                   </div>
-                  <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
-                    <span className="text-xs text-slate-500">{new Date(cls.start_time).toLocaleString()}</span>
-                    <button onClick={() => handleDeleteClass(cls.id)} className="bg-red-50 text-red-600 hover:bg-red-100 px-4 py-2 rounded-xl text-xs font-semibold transition">
+
+                  <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => navigate(`/classroom/${cls.id}`)}
+                        disabled={cls.status === 'ended'}
+                        className={`${
+                          cls.status === 'ended' 
+                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        } px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5`}
+                      >
+                        <Video className="w-4 h-4" /> 
+                        {cls.status === 'live' ? 'Enter Classroom' : cls.status === 'ended' ? 'Class Ended' : 'Host Session'}
+                      </button>
+                      <button 
+                        onClick={() => handleOpenAttendance(cls.id)}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
+                      >
+                        <UserCheck className="w-3.5 h-3.5 text-slate-500" /> Attendance
+                      </button>
+                    </div>
+
+                    <button onClick={() => handleDeleteClass(cls.id)} className="bg-red-50 text-red-600 hover:bg-red-100 px-3.5 py-2 rounded-xl text-xs font-semibold transition">
                       Delete Class
                     </button>
                   </div>
@@ -349,6 +577,8 @@ const handleSaveProfile = async (e) => {
                   value={title} 
                   onChange={(e) => setTitle(e.target.value)} 
                   required 
+                  minLength={3}
+                  maxLength={200}
                   placeholder="Advanced Web Development Masterclass"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
                 />
@@ -360,6 +590,8 @@ const handleSaveProfile = async (e) => {
                   value={description} 
                   onChange={(e) => setDescription(e.target.value)} 
                   required 
+                  minLength={5}
+                  maxLength={3000}
                   rows="3"
                   placeholder="What students will learn..."
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
@@ -372,14 +604,16 @@ const handleSaveProfile = async (e) => {
                   <input 
                     type="datetime-local" 
                     value={startTime} 
+                    min={minDateTime}
                     onChange={(e) => setStartTime(e.target.value)} 
                     required 
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
                   />
+                  <p className="text-[11px] text-slate-400 mt-1">Times are automatically normalized in UTC.</p>
                 </div>
 
                 <div>
-                  <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Student Limit</label>
+                  <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Student Limit (Capacity)</label>
                   <select 
                     value={studentLimit} 
                     onChange={(e) => setStudentLimit(e.target.value)}
@@ -409,6 +643,8 @@ const handleSaveProfile = async (e) => {
                 {!isNoLimitDuration && (
                   <input 
                     type="number" 
+                    min="10"
+                    max="720"
                     value={durationMinutes} 
                     onChange={(e) => setDurationMinutes(e.target.value)}
                     placeholder="Duration in minutes (e.g., 60)"
@@ -419,7 +655,7 @@ const handleSaveProfile = async (e) => {
 
               <button 
                 type="submit" 
-                className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3.5 rounded-xl shadow-lg shadow-red-600/25 transition"
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3.5 rounded-xl shadow-lg shadow-red-600/25 transition cursor-pointer"
               >
                 Schedule & Create Live Class
               </button>
@@ -432,7 +668,6 @@ const handleSaveProfile = async (e) => {
           <div className="max-w-xl bg-white border border-slate-200/80 p-8 rounded-2xl shadow-sm space-y-6">
             <h3 className="text-lg font-bold text-slate-900">Instructor Profile</h3>
             
-            {/* Profile Picture Uploader via Cloudinary */}
             <div className="flex items-center gap-6">
               <div className="relative w-20 h-20 rounded-full bg-red-100 text-red-600 font-bold text-3xl flex items-center justify-center overflow-hidden border-2 border-slate-200">
                 {profilePicPreview ? (
@@ -475,7 +710,7 @@ const handleSaveProfile = async (e) => {
                 />
               </div>
 
-              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition">
+              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition cursor-pointer">
                 Save Profile
               </button>
             </form>
@@ -509,7 +744,7 @@ const handleSaveProfile = async (e) => {
                 />
               </div>
 
-              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition">
+              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md shadow-red-600/20 transition cursor-pointer">
                 Update Password
               </button>
             </form>

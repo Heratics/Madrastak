@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { GraduationCap, ArrowLeft, Clock, User, Video, Users, CheckCircle, AlertCircle, X } from 'lucide-react';
+import { 
+  GraduationCap, ArrowLeft, Clock, User, Video, Users, 
+  CheckCircle, AlertCircle, X, Check, XCircle 
+} from 'lucide-react';
 import { API_URL } from '../config';
 
 export default function CourseDetail() {
@@ -9,36 +12,59 @@ export default function CourseDetail() {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
   const [classDetails, setClassDetails] = useState(null);
+  const [isBooked, setIsBooked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+  const token = localStorage.getItem('token');
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 4000);
   };
 
-  useEffect(() => {
-    fetch(`${API_URL}/api/classes`)
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          const found = data.find(c => c.id.toString() === id);
-          setClassDetails(found);
-        }
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error(err);
-        setLoading(false);
+  const fetchDetails = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/classes`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        const found = data.find(c => c.id.toString() === id);
+        setClassDetails(found);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkUserEnrollment = async () => {
+    if (!token || !user || user.role !== 'student') return;
+    try {
+      const res = await fetch(`${API_URL}/api/student/bookings`, {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-  }, [id]);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        const booked = data.some(b => b.id.toString() === id);
+        setIsBooked(booked);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchDetails();
+    checkUserEnrollment();
+  }, [id, token]);
 
   const handleBook = async () => {
     if (!user) {
       navigate('/login');
       return;
     }
-    const token = localStorage.getItem('token');
+
     try {
       const res = await fetch(`${API_URL}/api/bookings`, {
         method: 'POST',
@@ -50,7 +76,29 @@ export default function CourseDetail() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
+
       showToast('Successfully booked seat in this class!');
+      setIsBooked(true);
+      setClassDetails(prev => prev ? { ...prev, enrolled_count: (prev.enrolled_count || 0) + 1 } : prev);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleCancelBooking = async () => {
+    if (!window.confirm('Are you sure you want to cancel your seat for this lecture?')) return;
+
+    try {
+      const res = await fetch(`${API_URL}/api/bookings/${classDetails.id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+
+      showToast('Booking cancelled successfully.');
+      setIsBooked(false);
+      setClassDetails(prev => prev ? { ...prev, enrolled_count: Math.max(0, (prev.enrolled_count || 1) - 1) } : prev);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -70,6 +118,11 @@ export default function CourseDetail() {
       </div>
     );
   }
+
+  const isFull = classDetails.student_limit !== null && (classDetails.enrolled_count >= classDetails.student_limit);
+  const isEnded = classDetails.status === 'ended';
+  const isLive = classDetails.status === 'live';
+  const isTeacherOwner = user && user.id === classDetails.teacher_id;
 
   return (
     <div className="min-h-screen bg-white text-slate-900 relative">
@@ -104,16 +157,41 @@ export default function CourseDetail() {
         <div className="bg-slate-900 text-white rounded-3xl p-8 md:p-12 relative overflow-hidden flex flex-col justify-between space-y-6 shadow-xl">
           <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
           <div className="relative z-10 space-y-4">
-            <span className="bg-red-600 text-white text-xs font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider">
-              Live Interactive Class
-            </span>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {isLive ? (
+                <span className="bg-red-600 text-white text-xs font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+                  Live Now
+                </span>
+              ) : isEnded ? (
+                <span className="bg-slate-800 text-slate-300 text-xs font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider">
+                  Session Concluded
+                </span>
+              ) : (
+                <span className="bg-red-600 text-white text-xs font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider">
+                  Upcoming Scheduled Lecture
+                </span>
+              )}
+
+              <span className="bg-slate-800/80 text-slate-300 text-xs font-medium px-3.5 py-1.5 rounded-full flex items-center gap-1">
+                <Users className="w-3.5 h-3.5 text-red-400" />
+                {classDetails.enrolled_count || 0} {classDetails.student_limit ? `/ ${classDetails.student_limit}` : ''} Enrolled
+              </span>
+            </div>
+
             <h1 className="text-3xl md:text-5xl font-black tracking-tight">{classDetails.title}</h1>
             <p className="text-slate-300 text-base max-w-2xl leading-relaxed">{classDetails.description}</p>
           </div>
 
           <div className="relative z-10 flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800 text-sm font-medium text-slate-300">
-            <span className="flex items-center gap-2"><Clock className="w-4 h-4 text-red-500" /> {new Date(classDetails.start_time).toLocaleString()}</span>
-            <span className="flex items-center gap-2"><Video className="w-4 h-4 text-red-500" /> {classDetails.duration_minutes} mins duration</span>
+            <span className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-red-500" /> 
+              {new Date(classDetails.start_time).toLocaleString()}
+            </span>
+            <span className="flex items-center gap-2">
+              <Video className="w-4 h-4 text-red-500" /> 
+              {classDetails.duration_minutes >= 999999 ? 'Self-Paced / Ongoing' : `${classDetails.duration_minutes} mins duration`}
+            </span>
           </div>
         </div>
 
@@ -124,8 +202,28 @@ export default function CourseDetail() {
             <div className="bg-white border border-slate-200/80 p-8 rounded-3xl shadow-sm space-y-4">
               <h3 className="text-xl font-black text-slate-900">About This Live Session</h3>
               <p className="text-slate-600 leading-relaxed text-sm">
-                Join instructor {classDetails.teacher_name} for a fully immersive live session. Ask questions in real-time, collaborate with fellow students, and master the core modules of this topic.
+                Join instructor {classDetails.teacher_name} for a fully immersive live session inside Madrastak. Ask questions in real-time, participate in discussions, and master the core concepts.
               </p>
+            </div>
+
+            {/* Capacity Status Card */}
+            <div className="bg-slate-50 border border-slate-200/80 p-6 rounded-3xl space-y-3">
+              <h4 className="text-sm font-bold text-slate-800">Enrollment & Availability</h4>
+              <div className="flex items-center justify-between text-xs text-slate-600">
+                <span>Current Registrations:</span>
+                <span className="font-bold text-slate-900">{classDetails.enrolled_count || 0} students</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-slate-600">
+                <span>Maximum Capacity:</span>
+                <span className="font-bold text-slate-900">
+                  {classDetails.student_limit ? `${classDetails.student_limit} students` : 'Unlimited seats'}
+                </span>
+              </div>
+              {isFull && (
+                <p className="text-xs font-semibold text-red-600 pt-1">
+                  ⚠️ This lecture has reached its maximum student capacity.
+                </p>
+              )}
             </div>
           </div>
 
@@ -151,14 +249,71 @@ export default function CourseDetail() {
               </p>
             </div>
 
+            {/* Action Box */}
             <div className="bg-slate-50 border border-slate-200/80 p-6 rounded-3xl shadow-sm space-y-4 text-center">
-              <button 
-                onClick={handleBook}
-                className="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-lg shadow-red-600/25 transition"
-              >
-                Book Your Seat Now
-              </button>
-              <p className="text-xs text-slate-400">Instant access to live classroom upon booking.</p>
+              {isTeacherOwner ? (
+                <div className="space-y-3">
+                  <div className="p-3 bg-red-50 text-red-600 rounded-xl text-xs font-semibold">
+                    You are the instructor of this class.
+                  </div>
+                  <button 
+                    onClick={() => navigate(`/classroom/${classDetails.id}`)}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-md transition"
+                  >
+                    Enter Classroom as Host
+                  </button>
+                </div>
+              ) : isBooked ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-center gap-2 p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-2xl text-xs font-bold">
+                    <Check className="w-4 h-4" /> You are enrolled in this lecture
+                  </div>
+                  <button 
+                    onClick={() => navigate(`/classroom/${classDetails.id}`)}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-2"
+                  >
+                    <Video className="w-4 h-4" /> Enter Classroom
+                  </button>
+                  {!isEnded && (
+                    <button 
+                      onClick={handleCancelBooking}
+                      className="w-full bg-white hover:bg-red-50 border border-slate-200 text-red-600 py-2.5 rounded-xl font-semibold text-xs transition"
+                    >
+                      Cancel Reservation
+                    </button>
+                  )}
+                </div>
+              ) : isEnded ? (
+                <div className="space-y-2">
+                  <button 
+                    disabled 
+                    className="w-full bg-slate-200 text-slate-400 py-3.5 rounded-2xl font-bold text-sm cursor-not-allowed"
+                  >
+                    Lecture Concluded
+                  </button>
+                  <p className="text-xs text-slate-400">This class has already ended.</p>
+                </div>
+              ) : isFull ? (
+                <div className="space-y-2">
+                  <button 
+                    disabled 
+                    className="w-full bg-slate-300 text-slate-500 py-3.5 rounded-2xl font-bold text-sm cursor-not-allowed"
+                  >
+                    Class Full
+                  </button>
+                  <p className="text-xs text-slate-400">All available seats have been booked.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <button 
+                    onClick={handleBook}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-lg shadow-red-600/25 transition cursor-pointer"
+                  >
+                    Book Your Seat Now
+                  </button>
+                  <p className="text-xs text-slate-400">Instant access to live classroom upon booking.</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

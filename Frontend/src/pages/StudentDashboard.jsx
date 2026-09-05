@@ -3,7 +3,8 @@ import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, BookOpen, Video, User, Settings, 
-  LogOut, Clock, CheckCircle, GraduationCap, X, AlertCircle, Calendar 
+  LogOut, Clock, CheckCircle, GraduationCap, X, AlertCircle, Calendar,
+  Users, XCircle
 } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -11,7 +12,7 @@ export default function StudentDashboard() {
   const { user, logout } = useContext(AuthContext);
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [courseSubTab, setCourseSubTab] = useState('upcoming'); // 'upcoming' or 'previous' inside My Courses
+  const [courseSubTab, setCourseSubTab] = useState('upcoming');
   const [bookings, setBookings] = useState([]);
 
   // Profile & Settings State
@@ -45,6 +46,25 @@ export default function StudentDashboard() {
     fetchStudentBookings();
   }, []);
 
+  // Cancel Booking
+  const handleCancelBooking = async (classId) => {
+    if (!window.confirm('Are you sure you want to cancel your seat reservation for this lecture?')) return;
+
+    try {
+      const res = await fetch(`${API_URL}/api/bookings/${classId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to cancel reservation');
+
+      showToast('Reservation cancelled successfully. Seat freed up.');
+      setBookings(prev => prev.filter(b => b.id !== classId));
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     try {
@@ -59,6 +79,9 @@ export default function StudentDashboard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       showToast('Profile updated successfully!');
+      if (user) {
+        user.full_name = fullName;
+      }
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -85,9 +108,31 @@ export default function StudentDashboard() {
     }
   };
 
-  const now = new Date();
-  const upcomingClasses = bookings.filter(cls => new Date(cls.start_time) >= now);
-  const previousClasses = bookings.filter(cls => new Date(cls.start_time) < now);
+  const renderStatusBadge = (status) => {
+    if (status === 'live') {
+      return (
+        <span className="bg-red-50 text-red-600 border border-red-200 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-sm shadow-red-100">
+          <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span> Live Now
+        </span>
+      );
+    }
+    if (status === 'ended') {
+      return (
+        <span className="bg-slate-100 text-slate-600 border border-slate-200 text-xs font-bold px-3 py-1 rounded-full">
+          Concluded
+        </span>
+      );
+    }
+    return (
+      <span className="bg-blue-50 text-blue-600 border border-blue-200 text-xs font-bold px-3 py-1 rounded-full">
+        Scheduled
+      </span>
+    );
+  };
+
+  // Split into active/upcoming and previous (concluded)
+  const upcomingClasses = bookings.filter(cls => cls.status !== 'ended');
+  const previousClasses = bookings.filter(cls => cls.status === 'ended');
 
   return (
     <div className="min-h-screen bg-slate-50 flex relative">
@@ -98,6 +143,9 @@ export default function StudentDashboard() {
         }`}>
           {toast.type === 'error' ? <AlertCircle className="w-5 h-5" /> : <CheckCircle className="w-5 h-5 text-emerald-400" />}
           <span>{toast.message}</span>
+          <button onClick={() => setToast({ show: false, message: '', type: 'success' })} className="ml-2 text-white/70 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -158,12 +206,12 @@ export default function StudentDashboard() {
               <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-2">
                 <div className="text-blue-600"><Calendar className="w-6 h-6" /></div>
                 <h3 className="text-3xl font-black text-slate-900">{upcomingClasses.length}</h3>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upcoming Scheduled Sessions</p>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upcoming & Active Sessions</p>
               </div>
             </div>
 
             <div className="space-y-6">
-              <h2 className="text-xl font-black text-slate-900">Your Upcoming Live Virtual Sessions</h2>
+              <h2 className="text-xl font-black text-slate-900">Your Scheduled Virtual Sessions</h2>
               {upcomingClasses.length === 0 ? (
                 <div className="bg-white border border-slate-200 p-8 rounded-2xl text-center text-slate-500">
                   You haven't booked any upcoming classes yet. Explore the catalog to reserve a seat!
@@ -173,21 +221,47 @@ export default function StudentDashboard() {
                   {upcomingClasses.map(cls => (
                     <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm flex flex-col justify-between space-y-4">
                       <div className="space-y-2">
-                        <span className="bg-red-50 text-red-600 text-xs font-bold px-3 py-1 rounded-full">Active Enrollment</span>
+                        <div className="flex justify-between items-start">
+                          {renderStatusBadge(cls.status)}
+                          <span className="bg-red-50 text-red-600 text-xs font-bold px-3 py-1 rounded-full">
+                            Seat Confirmed
+                          </span>
+                        </div>
                         <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
-                        <p className="text-slate-500 text-sm">{cls.description}</p>
-                        <p className="text-xs font-medium text-slate-400">Instructor: {cls.teacher_name}</p>
+                        <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
+                        <div className="flex items-center gap-4 text-xs text-slate-400">
+                          <span>Instructor: <strong className="text-slate-700">{cls.teacher_name}</strong></span>
+                          <span>•</span>
+                          <span>{cls.duration_minutes} mins</span>
+                        </div>
                       </div>
-                      <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
-                        <span className="text-xs text-slate-500">{new Date(cls.start_time).toLocaleString()}</span>
-                        <a 
-                          href={`https://meet.jit.si/${cls.meeting_room_id}`} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-lg shadow-emerald-600/20 transition flex items-center gap-2"
-                        >
-                          <Video className="w-4 h-4" /> Join Virtual Classroom
-                        </a>
+
+                      <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
+                        <span className="text-xs text-slate-500 font-medium">
+                          {new Date(cls.start_time).toLocaleString()}
+                        </span>
+
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => navigate(`/classroom/${cls.id}`)}
+                            className={`${
+                              cls.status === 'live'
+                                ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/25 animate-pulse'
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
+                            } px-4 py-2 rounded-xl text-xs font-semibold shadow-md transition flex items-center gap-1.5`}
+                          >
+                            <Video className="w-4 h-4" /> 
+                            {cls.status === 'live' ? 'Join Live Now' : 'Enter Classroom'}
+                          </button>
+
+                          <button
+                            onClick={() => handleCancelBooking(cls.id)}
+                            className="bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 px-3 py-2 rounded-xl text-xs font-semibold transition"
+                            title="Cancel your reservation"
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -197,7 +271,7 @@ export default function StudentDashboard() {
           </div>
         )}
 
-        {/* TAB 2: MY COURSES (WITH UPCOMING & PREVIOUS SUB-TABS) */}
+        {/* TAB 2: MY COURSES */}
         {activeTab === 'courses' && (
           <div className="space-y-6">
             <div className="flex gap-4 border-b border-slate-200 pb-4">
@@ -205,13 +279,13 @@ export default function StudentDashboard() {
                 onClick={() => setCourseSubTab('upcoming')}
                 className={`px-5 py-2 rounded-xl text-sm font-bold transition ${courseSubTab === 'upcoming' ? 'bg-red-600 text-white shadow-md shadow-red-600/20' : 'bg-white text-slate-600 border border-slate-200'}`}
               >
-                Upcoming Classes ({upcomingClasses.length})
+                Upcoming Sessions ({upcomingClasses.length})
               </button>
               <button 
                 onClick={() => setCourseSubTab('previous')}
                 className={`px-5 py-2 rounded-xl text-sm font-bold transition ${courseSubTab === 'previous' ? 'bg-red-600 text-white shadow-md shadow-red-600/20' : 'bg-white text-slate-600 border border-slate-200'}`}
               >
-                Previous Classes ({previousClasses.length})
+                Completed Sessions ({previousClasses.length})
               </button>
             </div>
 
@@ -221,20 +295,38 @@ export default function StudentDashboard() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {upcomingClasses.map(cls => (
-                    <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4">
-                      <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
-                      <p className="text-slate-500 text-sm">{cls.description}</p>
-                      <p className="text-xs font-semibold text-slate-400">Instructor: {cls.teacher_name}</p>
-                      <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
+                    <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-start">
+                          {renderStatusBadge(cls.status)}
+                          <span className="text-xs font-semibold text-slate-400">
+                            Instructor: {cls.teacher_name}
+                          </span>
+                        </div>
+                        <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
+                        <p className="text-slate-500 text-sm">{cls.description}</p>
+                      </div>
+
+                      <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
                         <span className="text-xs text-slate-500">{new Date(cls.start_time).toLocaleString()}</span>
-                        <a 
-                          href={`https://meet.jit.si/${cls.meeting_room_id}`} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-semibold"
-                        >
-                          Join Virtual Classroom
-                        </a>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => navigate(`/classroom/${cls.id}`)}
+                            className={`${
+                              cls.status === 'live' 
+                                ? 'bg-red-600 hover:bg-red-700 text-white' 
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                            } px-4 py-2 rounded-xl text-xs font-semibold transition`}
+                          >
+                            {cls.status === 'live' ? 'Join Live Now' : 'Enter Classroom'}
+                          </button>
+                          <button 
+                            onClick={() => handleCancelBooking(cls.id)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-2 rounded-xl text-xs font-semibold transition"
+                          >
+                            Cancel Reservation
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -247,11 +339,18 @@ export default function StudentDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {previousClasses.map(cls => (
                     <div key={cls.id} className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4 opacity-80">
-                      <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
-                      <p className="text-slate-500 text-sm">{cls.description}</p>
-                      <p className="text-xs font-semibold text-slate-400">Instructor: {cls.teacher_name}</p>
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-start">
+                          <span className="bg-slate-100 text-slate-500 text-xs font-bold px-2.5 py-1 rounded-full">
+                            Concluded
+                          </span>
+                          <span className="text-xs font-semibold text-slate-400">Instructor: {cls.teacher_name}</span>
+                        </div>
+                        <h3 className="text-xl font-bold text-slate-900">{cls.title}</h3>
+                        <p className="text-slate-500 text-sm">{cls.description}</p>
+                      </div>
                       <div className="pt-4 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
-                        <span>Completed on: {new Date(cls.start_time).toLocaleDateString()}</span>
+                        <span>Scheduled on: {new Date(cls.start_time).toLocaleDateString()}</span>
                         <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-lg font-medium">Archived</span>
                       </div>
                     </div>
@@ -285,7 +384,7 @@ export default function StudentDashboard() {
                   className="w-full bg-slate-100 border border-slate-200 rounded-xl p-3 text-slate-500 text-sm cursor-not-allowed"
                 />
               </div>
-              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md transition">
+              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md transition cursor-pointer">
                 Save Changes
               </button>
             </form>
@@ -307,6 +406,7 @@ export default function StudentDashboard() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
                 />
               </div>
+
               <div>
                 <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">New Password</label>
                 <input 
@@ -317,7 +417,8 @@ export default function StudentDashboard() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
                 />
               </div>
-              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md transition">
+
+              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 rounded-xl text-sm shadow-md transition cursor-pointer">
                 Update Password
               </button>
             </form>

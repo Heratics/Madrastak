@@ -29,7 +29,6 @@ export default function HomeCatalog() {
     fetch(`${API_URL}/api/stats`)
       .then(res => res.json())
       .then(data => { 
-        console.log('Stats received in frontend:', data);
         if (data) {
           setStats({
             students: Number(data.students) || 0,
@@ -42,7 +41,7 @@ export default function HomeCatalog() {
   }, []);
 
   const handleBook = async (classId, e) => {
-    e.stopPropagation(); // Prevents card click from triggering navigation
+    e.stopPropagation();
     if (!user) {
       navigate('/login');
       return;
@@ -59,7 +58,10 @@ export default function HomeCatalog() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
+
       showToast('Successfully booked seat!');
+      // Update local count immediately
+      setClasses(prev => prev.map(c => c.id === classId ? { ...c, enrolled_count: (c.enrolled_count || 0) + 1 } : c));
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -78,6 +80,29 @@ export default function HomeCatalog() {
     cls.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const renderStatusBadge = (status) => {
+    if (status === 'live') {
+      return (
+        <span className="bg-red-600 text-white text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider flex items-center gap-1.5 shadow-md">
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+          Live Now
+        </span>
+      );
+    }
+    if (status === 'ended') {
+      return (
+        <span className="bg-slate-800 text-slate-300 text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+          Concluded
+        </span>
+      );
+    }
+    return (
+      <span className="bg-slate-900/80 text-white text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+        Scheduled
+      </span>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-white text-slate-900 relative">
       {/* Custom Toast Popup */}
@@ -87,6 +112,9 @@ export default function HomeCatalog() {
         }`}>
           {toast.type === 'error' ? <AlertCircle className="w-5 h-5" /> : <CheckCircle className="w-5 h-5 text-emerald-400" />}
           <span>{toast.message}</span>
+          <button onClick={() => setToast({ show: false, message: '', type: 'success' })} className="ml-2 text-white/70 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -101,10 +129,10 @@ export default function HomeCatalog() {
           </div>
 
           <nav className="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-600">
-            <button onClick={() => setViewMode('home')} className={`transition ${viewMode === 'home' ? 'text-red-600 font-semibold' : 'hover:text-red-600'}`}>Home</button>
-            <button onClick={() => setViewMode('courses')} className={`transition ${viewMode === 'courses' ? 'text-red-600 font-semibold' : 'hover:text-red-600'}`}>Courses</button>
+            <button onClick={() => setViewMode('home')} className={`transition cursor-pointer ${viewMode === 'home' ? 'text-red-600 font-semibold' : 'hover:text-red-600'}`}>Home</button>
+            <button onClick={() => setViewMode('courses')} className={`transition cursor-pointer ${viewMode === 'courses' ? 'text-red-600 font-semibold' : 'hover:text-red-600'}`}>Courses</button>
             {user && (
-              <button onClick={handleDashboardRedirect} className="hover:text-red-600 transition">My Dashboard</button>
+              <button onClick={handleDashboardRedirect} className="hover:text-red-600 transition cursor-pointer">My Dashboard</button>
             )}
           </nav>
 
@@ -115,16 +143,16 @@ export default function HomeCatalog() {
                   <p className="text-sm font-bold text-slate-800">{user.full_name}</p>
                   <p className="text-xs text-red-600 capitalize font-medium">{user.role}</p>
                 </div>
-                <button onClick={logout} className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg font-medium transition">
+                <button onClick={logout} className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg font-medium transition cursor-pointer">
                   Logout
                 </button>
               </div>
             ) : (
               <div className="flex items-center gap-3">
-                <button onClick={() => navigate('/login')} className="text-sm font-semibold text-slate-700 hover:text-red-600 px-4 py-2 transition">
+                <button onClick={() => navigate('/login')} className="text-sm font-semibold text-slate-700 hover:text-red-600 px-4 py-2 transition cursor-pointer">
                   Log In
                 </button>
-                <button onClick={() => navigate('/login')} className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-lg shadow-red-600/25 transition">
+                <button onClick={() => navigate('/login')} className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-lg shadow-red-600/25 transition cursor-pointer">
                   Sign Up
                 </button>
               </div>
@@ -159,7 +187,7 @@ export default function HomeCatalog() {
               />
               <button 
                 onClick={() => setViewMode('courses')}
-                className="bg-red-600 hover:bg-red-700 text-white px-8 py-3.5 rounded-xl font-semibold text-sm shadow-md shadow-red-600/20 transition"
+                className="bg-red-600 hover:bg-red-700 text-white px-8 py-3.5 rounded-xl font-semibold text-sm shadow-md shadow-red-600/20 transition cursor-pointer"
               >
                 Search
               </button>
@@ -194,48 +222,68 @@ export default function HomeCatalog() {
                 <h2 className="text-3xl font-black text-slate-900">Trending Live Classes</h2>
                 <p className="text-slate-500 text-sm mt-1">Join scheduled sessions hosted by top educators in real-time.</p>
               </div>
-              <button onClick={() => setViewMode('courses')} className="text-sm font-semibold text-red-600 hover:text-red-700 transition">
+              <button onClick={() => setViewMode('courses')} className="text-sm font-semibold text-red-600 hover:text-red-700 transition cursor-pointer">
                 View All &rarr;
               </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {filteredClasses.slice(0, 3).map((cls) => (
-                <div 
-                  key={cls.id} 
-                  onClick={() => navigate(`/course/${cls.id}`)}
-                  className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-lg shadow-slate-100 hover:shadow-xl transition flex flex-col justify-between group cursor-pointer"
-                >
-                  <div>
-                    <div className="h-48 bg-slate-900 relative overflow-hidden flex items-center justify-center text-white">
-                      <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
-                      <Video className="w-12 h-12 text-red-500 relative z-10 group-hover:scale-110 transition duration-300" />
-                      <span className="absolute top-4 right-4 bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-                        Live Session
-                      </span>
-                    </div>
-                    <div className="p-6 space-y-3">
-                      <h3 className="text-xl font-bold text-slate-900 group-hover:text-red-600 transition">{cls.title}</h3>
-                      <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
-                      
-                      <div className="flex items-center gap-4 text-xs font-medium text-slate-500 pt-2">
-                        <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-red-600" /> {cls.teacher_name}</span>
-                        <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString()}</span>
+              {filteredClasses.slice(0, 3).map((cls) => {
+                const isFull = cls.student_limit !== null && (cls.enrolled_count >= cls.student_limit);
+                const isEnded = cls.status === 'ended';
+
+                return (
+                  <div 
+                    key={cls.id} 
+                    onClick={() => navigate(`/course/${cls.id}`)}
+                    className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-lg shadow-slate-100 hover:shadow-xl transition flex flex-col justify-between group cursor-pointer"
+                  >
+                    <div>
+                      <div className="h-48 bg-slate-900 relative overflow-hidden flex items-center justify-center text-white">
+                        <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
+                        <Video className="w-12 h-12 text-red-500 relative z-10 group-hover:scale-110 transition duration-300" />
+                        <div className="absolute top-4 right-4">
+                          {renderStatusBadge(cls.status)}
+                        </div>
+                      </div>
+                      <div className="p-6 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-xl font-bold text-slate-900 group-hover:text-red-600 transition truncate">{cls.title}</h3>
+                        </div>
+                        <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
+                        
+                        <div className="flex items-center justify-between text-xs font-medium text-slate-500 pt-2 border-t border-slate-100">
+                          <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-red-600" /> {cls.teacher_name}</span>
+                          <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString()}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="p-6 pt-0 flex justify-between items-center border-t border-slate-100 mt-4">
-                    <span className="text-xs bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg font-medium">{cls.duration_minutes} mins</span>
-                    <button 
-                      onClick={(e) => handleBook(cls.id, e)}
-                      className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition"
-                    >
-                      Book Seat
-                    </button>
+                    <div className="p-6 pt-0 flex justify-between items-center border-t border-slate-100 mt-4">
+                      <div className="text-xs text-slate-500 font-medium">
+                        <span>{cls.enrolled_count || 0} {cls.student_limit ? `/ ${cls.student_limit}` : ''} Seats</span>
+                      </div>
+
+                      {isEnded ? (
+                        <span className="text-xs bg-slate-100 text-slate-400 px-4 py-2 rounded-xl font-semibold">
+                          Concluded
+                        </span>
+                      ) : isFull ? (
+                        <span className="text-xs bg-slate-200 text-slate-500 px-4 py-2 rounded-xl font-semibold">
+                          Class Full
+                        </span>
+                      ) : (
+                        <button 
+                          onClick={(e) => handleBook(cls.id, e)}
+                          className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition cursor-pointer"
+                        >
+                          Book Seat
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </>
@@ -260,42 +308,60 @@ export default function HomeCatalog() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-4">
-            {filteredClasses.map((cls) => (
-              <div 
-                key={cls.id} 
-                onClick={() => navigate(`/course/${cls.id}`)}
-                className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition flex flex-col justify-between group cursor-pointer"
-              >
-                <div>
-                  <div className="h-48 bg-slate-900 relative overflow-hidden flex items-center justify-center text-white">
-                    <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
-                    <Video className="w-12 h-12 text-red-500 relative z-10 group-hover:scale-110 transition duration-300" />
-                    <span className="absolute top-4 right-4 bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-                      Live Session
-                    </span>
-                  </div>
-                  <div className="p-6 space-y-3">
-                    <h3 className="text-xl font-bold text-slate-900 group-hover:text-red-600 transition">{cls.title}</h3>
-                    <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
-                    
-                    <div className="flex items-center gap-4 text-xs font-medium text-slate-500 pt-2">
-                      <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-red-600" /> {cls.teacher_name}</span>
-                      <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString()}</span>
+            {filteredClasses.map((cls) => {
+              const isFull = cls.student_limit !== null && (cls.enrolled_count >= cls.student_limit);
+              const isEnded = cls.status === 'ended';
+
+              return (
+                <div 
+                  key={cls.id} 
+                  onClick={() => navigate(`/course/${cls.id}`)}
+                  className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition flex flex-col justify-between group cursor-pointer"
+                >
+                  <div>
+                    <div className="h-48 bg-slate-900 relative overflow-hidden flex items-center justify-center text-white">
+                      <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 to-red-950 opacity-90"></div>
+                      <Video className="w-12 h-12 text-red-500 relative z-10 group-hover:scale-110 transition duration-300" />
+                      <div className="absolute top-4 right-4">
+                        {renderStatusBadge(cls.status)}
+                      </div>
+                    </div>
+                    <div className="p-6 space-y-3">
+                      <h3 className="text-xl font-bold text-slate-900 group-hover:text-red-600 transition truncate">{cls.title}</h3>
+                      <p className="text-slate-500 text-sm line-clamp-2">{cls.description}</p>
+                      
+                      <div className="flex items-center justify-between text-xs font-medium text-slate-500 pt-2 border-t border-slate-100">
+                        <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-red-600" /> {cls.teacher_name}</span>
+                        <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-red-600" /> {new Date(cls.start_time).toLocaleDateString()}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="p-6 pt-0 flex justify-between items-center border-t border-slate-100 mt-4">
-                  <span className="text-xs bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg font-medium">{cls.duration_minutes} mins</span>
-                  <button 
-                    onClick={(e) => handleBook(cls.id, e)}
-                    className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition"
-                  >
-                    Book Seat
-                  </button>
+                  <div className="p-6 pt-0 flex justify-between items-center border-t border-slate-100 mt-4">
+                    <div className="text-xs text-slate-500 font-medium">
+                      <span>{cls.enrolled_count || 0} {cls.student_limit ? `/ ${cls.student_limit}` : ''} Seats</span>
+                    </div>
+
+                    {isEnded ? (
+                      <span className="text-xs bg-slate-100 text-slate-400 px-4 py-2 rounded-xl font-semibold">
+                        Concluded
+                      </span>
+                    ) : isFull ? (
+                      <span className="text-xs bg-slate-200 text-slate-500 px-4 py-2 rounded-xl font-semibold">
+                        Class Full
+                      </span>
+                    ) : (
+                      <button 
+                        onClick={(e) => handleBook(cls.id, e)}
+                        className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-red-600/20 transition cursor-pointer"
+                      >
+                        Book Seat
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}

@@ -96,7 +96,10 @@ function generateJaasToken({ user, roomName, isTeacher, durationMinutes = 60 }) 
 
   const appId = getJaasAppId();
   const kid = getJaasKeyId();
-  const normalizedRoom = (roomName || '*').toLowerCase();
+
+  // Strip any existing AppID prefix to obtain the canonical clean room name
+  const cleanRoom = (roomName || '*').toLowerCase().replace(/^[a-z0-9-]+-magic-cookie-[a-z0-9]+\//i, '').trim();
+  const qualifiedRoom = cleanRoom === '*' ? '*' : `${appId}/${cleanRoom}`;
 
   const now = Math.floor(Date.now() / 1000);
   const nbf = now - 10;
@@ -110,7 +113,7 @@ function generateJaasToken({ user, roomName, isTeacher, durationMinutes = 60 }) 
     aud: 'jitsi',
     iss: 'chat',
     sub: appId,
-    room: normalizedRoom,
+    room: '*', // Wildcard matches the AppID-scoped room and any breakout rooms
     iat: now,
     nbf: nbf,
     exp: exp,
@@ -120,13 +123,17 @@ function generateJaasToken({ user, roomName, isTeacher, durationMinutes = 60 }) 
         name: user?.full_name || (isModerator ? 'Instructor' : 'Student'),
         email: user?.email || '',
         avatar: '',
-        moderator: isModerator ? 'true' : 'false'
+        moderator: isModerator === true
       },
       features: {
-        recording: isModerator ? 'true' : 'false',
-        livestreaming: isModerator ? 'true' : 'false',
-        transcription: isModerator ? 'true' : 'false',
-        'screen-sharing': 'true'
+        recording: isModerator === true,
+        livestreaming: isModerator === true,
+        transcription: isModerator === true,
+        'screen-sharing': true
+      },
+      room: {
+        name: qualifiedRoom,
+        regex: false
       }
     }
   };
@@ -144,7 +151,8 @@ function generateJaasToken({ user, roomName, isTeacher, durationMinutes = 60 }) 
     return {
       token,
       appId,
-      roomName: normalizedRoom,
+      roomName: cleanRoom,
+      qualifiedRoomName: qualifiedRoom,
       isModerator
     };
   } catch (err) {

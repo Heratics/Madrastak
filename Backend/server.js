@@ -449,21 +449,30 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
       console.error('[JaaS] Failed to generate token for access request:', tokenErr.message);
     }
 
+    if (!jaasData || !jaasData.token) {
+      return res.status(503).json({
+        allowed: false,
+        message: 'Live classroom is currently unavailable. JaaS authentication is not configured on the server.'
+      });
+    }
+
     res.json({
       allowed: true,
       classId: cls.id,
       title: cls.title,
       description: cls.description,
-      meeting_room_id: cls.meeting_room_id,
+      meeting_room_id: jaasData.roomName,
       status: cls.status,
       isHost: isTeacher,
       duration_minutes: cls.duration_minutes,
       start_time: normalizeToIsoString(cls.start_time),
       teacher_name: cls.teacher_name,
-      jaas: jaasData ? {
+      jaas: {
         appId: jaasData.appId,
-        jwt: jaasData.token
-      } : null
+        jwt: jaasData.token,
+        roomName: jaasData.roomName,
+        qualifiedRoomName: jaasData.qualifiedRoomName
+      }
     });
   } catch (error) {
     console.error('Access check error:', error);

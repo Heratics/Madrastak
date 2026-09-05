@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { JitsiMeeting, JaaSMeeting } from '@jitsi/react-sdk';
+import { JaaSMeeting } from '@jitsi/react-sdk';
 import { AuthContext } from '../context/AuthContext';
 import { 
   GraduationCap, ArrowLeft, Video, Clock, AlertCircle, 
@@ -344,8 +344,6 @@ export default function Classroom() {
     );
   }
 
-  const jitsiDomain = import.meta.env.VITE_JITSI_DOMAIN || 'meet.jit.si';
-
   // Toolbar options tailored to host vs student
   const teacherToolbar = [
     'camera', 'microphone', 'desktop', 'screenshare', 'chat', 
@@ -513,21 +511,48 @@ export default function Classroom() {
             }
           };
 
-          if (roomData.jaas?.jwt && roomData.jaas?.appId) {
+          const cleanRoomName = (roomData.jaas?.roomName || roomData.meeting_room_id || '')
+            .toLowerCase()
+            .replace(/^[a-z0-9-]+-magic-cookie-[a-z0-9]+\//i, '')
+            .trim();
+
+          if (!roomData.jaas?.jwt || !roomData.jaas?.appId) {
             return (
-              <JaaSMeeting
-                appId={roomData.jaas.appId}
-                roomName={roomData.meeting_room_id.toLowerCase()}
-                jwt={roomData.jaas.jwt}
-                {...commonProps}
-              />
+              <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center">
+                <div className="max-w-md w-full bg-slate-900 border border-slate-800 p-8 rounded-3xl space-y-5 shadow-2xl">
+                  <div className="w-14 h-14 bg-red-500/10 text-red-400 rounded-2xl flex items-center justify-center mx-auto border border-red-500/20">
+                    <ShieldAlert className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-xl font-bold text-white">Live Classroom Unavailable</h3>
+                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                      Secure live classroom credentials could not be obtained from the server. JaaS authentication service is not configured.
+                    </p>
+                  </div>
+                  <div className="pt-2 flex flex-col gap-2.5">
+                    <button 
+                      onClick={() => fetchRoomAccess()} 
+                      className="w-full bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl font-semibold text-xs transition cursor-pointer"
+                    >
+                      Retry Connection
+                    </button>
+                    <button 
+                      onClick={handleLeaveClassroom} 
+                      className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded-xl font-semibold text-xs transition cursor-pointer"
+                    >
+                      Return to Dashboard
+                    </button>
+                  </div>
+                </div>
+              </div>
             );
           }
 
           return (
-            <JitsiMeeting
-              domain={jitsiDomain}
-              roomName={roomData.meeting_room_id}
+            <JaaSMeeting
+              appId={roomData.jaas.appId}
+              roomName={cleanRoomName}
+              jwt={roomData.jaas.jwt}
               {...commonProps}
             />
           );

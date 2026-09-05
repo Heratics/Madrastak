@@ -54,17 +54,15 @@ function validateClassInput({ title, description, start_time, duration_minutes, 
     return { valid: false, error: 'Duration cannot exceed 24 hours (1440 minutes).' };
   }
 
-  let limit = null;
-  if (student_limit !== undefined && student_limit !== null && student_limit !== '' && student_limit !== 'unlimited') {
-    const parsedLimit = parseInt(student_limit, 10);
-    if (isNaN(parsedLimit) || parsedLimit <= 0) {
-      return { valid: false, error: 'Student limit must be a positive number or "unlimited".' };
-    }
-    if (parsedLimit > 1000) {
-      return { valid: false, error: 'Student limit cannot exceed 1000 students.' };
-    }
-    limit = parsedLimit;
+  if (student_limit === undefined || student_limit === null || student_limit === '' || student_limit === 'unlimited') {
+    return { valid: false, error: 'Student limit is required and must be between 1 and 20 (maximum 20 students).' };
   }
+
+  const parsedLimit = Number(student_limit);
+  if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 20) {
+    return { valid: false, error: 'Student limit must be an integer between 1 and 20 (maximum 20 students).' };
+  }
+  const limit = parsedLimit;
 
   return { valid: true, sanitizedLimit: limit, sanitizedDuration: duration };
 }

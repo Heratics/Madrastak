@@ -32,7 +32,7 @@ export default function TeacherDashboard() {
   const [startTime, setStartTime] = useState('');
   const [isNoLimitDuration, setIsNoLimitDuration] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState('60');
-  const [studentLimit, setStudentLimit] = useState('25');
+  const [studentLimit, setStudentLimit] = useState('20');
 
   // Profile & Settings State
   const [fullName, setFullName] = useState(user?.full_name || '');
@@ -205,6 +205,12 @@ export default function TeacherDashboard() {
       return;
     }
 
+    const parsedLimit = Number(studentLimit);
+    if (!studentLimit || !Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 20) {
+      showToast('Student limit must be an integer between 1 and 20 (maximum 20 students).', 'error');
+      return;
+    }
+
     try {
       const currentToken = localStorage.getItem('token') || token;
       const res = await fetch(`${API_URL}/api/classes`, {
@@ -218,7 +224,7 @@ export default function TeacherDashboard() {
           description: description.trim(),
           start_time: new Date(startTime).toISOString(),
           duration_minutes: finalDuration,
-          student_limit: studentLimit
+          student_limit: parsedLimit
         })
       });
       const data = await res.json();
@@ -228,6 +234,7 @@ export default function TeacherDashboard() {
       setTitle('');
       setDescription('');
       setStartTime('');
+      setStudentLimit('20');
       await fetchTeacherClasses();
       setClassesSubTab('upcoming');
       setActiveTab('classes');
@@ -859,17 +866,35 @@ export default function TeacherDashboard() {
                 </div>
 
                 <div>
-                  <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">Student Limit (Capacity)</label>
-                  <select 
-                    value={studentLimit} 
-                    onChange={(e) => setStudentLimit(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
-                  >
-                    <option value="25">25 Students Max</option>
-                    <option value="50">50 Students Max</option>
-                    <option value="100">100 Students Max</option>
-                    <option value="unlimited">No Limit (Unlimited)</option>
-                  </select>
+                  <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">
+                    Student Limit (1 – 20 Students)
+                  </label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="number" 
+                      min="1" 
+                      max="20" 
+                      step="1"
+                      value={studentLimit} 
+                      onChange={(e) => setStudentLimit(e.target.value)}
+                      placeholder="1 - 20"
+                      className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition font-semibold"
+                      required
+                    />
+                    <select 
+                      value={Array.from({ length: 20 }, (_, i) => String(i + 1)).includes(String(studentLimit).trim()) ? String(studentLimit).trim() : ''} 
+                      onChange={(e) => setStudentLimit(e.target.value)}
+                      className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition cursor-pointer"
+                    >
+                      <option value="" disabled>Select limit...</option>
+                      {Array.from({ length: 20 }, (_, i) => i + 1).map((num) => (
+                        <option key={num} value={num}>
+                          {num} {num === 1 ? 'Student' : 'Students'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">Select from dropdown or type a number between 1 and 20 (max 20 students).</p>
                 </div>
               </div>
 

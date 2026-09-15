@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { getValidToken } from '../utils/auth';
 import { 
   LayoutDashboard, BookOpen, PlusCircle, User, Settings, 
   LogOut, Video, Users, Clock, Trash2, CheckCircle, GraduationCap, 
@@ -41,7 +42,7 @@ export default function TeacherDashboard() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
-  const token = localStorage.getItem('token');
+  const token = getValidToken();
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
@@ -52,7 +53,7 @@ export default function TeacherDashboard() {
 
   const fetchTeacherClasses = async () => {
     try {
-      const currentToken = localStorage.getItem('token') || token;
+      const currentToken = getValidToken() || token;
       if (!currentToken) return;
       const res = await fetch(`${API_URL}/api/teacher/classes`, {
         headers: { 'Authorization': `Bearer ${currentToken}` }
@@ -212,7 +213,7 @@ export default function TeacherDashboard() {
     }
 
     try {
-      const currentToken = localStorage.getItem('token') || token;
+      const currentToken = getValidToken() || token;
       const res = await fetch(`${API_URL}/api/classes`, {
         method: 'POST',
         headers: {
@@ -246,7 +247,7 @@ export default function TeacherDashboard() {
   const handleStartClass = async (classId, currentStatus) => {
     try {
       if (currentStatus === 'scheduled') {
-        const currentToken = localStorage.getItem('token') || token;
+        const currentToken = getValidToken() || token;
         await fetch(`${API_URL}/api/classes/${classId}/start`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${currentToken}` }
@@ -261,7 +262,7 @@ export default function TeacherDashboard() {
   const handleDeleteClass = async (classId) => {
     if (!window.confirm('Are you sure you want to delete this class?')) return;
     try {
-      const currentToken = localStorage.getItem('token') || token;
+      const currentToken = getValidToken() || token;
       const res = await fetch(`${API_URL}/api/classes/${classId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${currentToken}` }

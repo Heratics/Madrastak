@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { JaaSMeeting } from '@jitsi/react-sdk';
 import { AuthContext } from '../context/AuthContext';
+import { getValidToken, isTokenExpired } from '../utils/auth';
 import { 
   GraduationCap, ArrowLeft, Video, Clock, AlertCircle, 
   CheckCircle, User, LogOut, PhoneOff, ShieldAlert, Loader2 
@@ -11,7 +12,7 @@ import { API_URL } from '../config';
 export default function Classroom() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useContext(AuthContext);
+  const { user, logout } = useContext(AuthContext);
 
   const [roomData, setRoomData] = useState(null);
   const [waitingState, setWaitingState] = useState(null);
@@ -23,17 +24,24 @@ export default function Classroom() {
 
   const jitsiApiRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
-  const token = localStorage.getItem('token');
+  const token = getValidToken();
 
   // 1. Authorize user and retrieve meeting credentials
   const fetchRoomAccess = async (isSilentPoll = false) => {
+    const activeToken = getValidToken();
+    if (!activeToken) {
+      if (logout) logout();
+      else navigate('/login');
+      return;
+    }
+
     if (!isSilentPoll) setLoading(true);
     setError(null);
 
     try {
       const res = await fetch(`${API_URL}/api/classes/${id}/access`, {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${activeToken}`
         }
       });
 
@@ -60,8 +68,10 @@ export default function Classroom() {
   };
 
   useEffect(() => {
-    if (!token) {
-      navigate('/login');
+    const activeToken = getValidToken();
+    if (!activeToken) {
+      if (logout) logout();
+      else navigate('/login');
       return;
     }
     fetchRoomAccess();

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
+import { getValidToken } from '../utils/auth';
 import { 
   GraduationCap, ArrowLeft, Clock, User, Video, Users, 
   CheckCircle, AlertCircle, X, Check, XCircle 
@@ -16,7 +17,7 @@ export default function CourseDetail() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
-  const token = localStorage.getItem('token');
+  const token = getValidToken();
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
@@ -107,7 +108,7 @@ export default function CourseDetail() {
   const handleHostStart = async () => {
     try {
       if (classDetails?.status === 'scheduled') {
-        const currentToken = localStorage.getItem('token') || token;
+        const currentToken = getValidToken() || token;
         await fetch(`${API_URL}/api/classes/${classDetails.id}/start`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${currentToken}` }

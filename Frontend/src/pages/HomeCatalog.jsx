@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { getValidToken } from '../utils/auth';
 import { Search, User, BookOpen, Video, Award, Users, Star, Clock, GraduationCap, CheckCircle, AlertCircle, X } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -47,7 +48,7 @@ export default function HomeCatalog() {
       navigate('/login');
       return;
     }
-    const token = localStorage.getItem('token');
+    const token = getValidToken();
     try {
       const res = await fetch(`${API_URL}/api/bookings`, {
         method: 'POST',

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { getValidToken } from '../utils/auth';
 import { 
   LayoutDashboard, BookOpen, Video, User, Settings, 
   LogOut, Clock, CheckCircle, GraduationCap, X, AlertCircle, Calendar,
@@ -23,7 +24,7 @@ export default function StudentDashboard() {
   // Toast Popup State
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
-  const token = localStorage.getItem('token');
+  const token = getValidToken();
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });

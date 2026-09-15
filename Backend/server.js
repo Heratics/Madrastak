@@ -601,6 +601,205 @@ app.delete('/api/classes/:id', verifyToken, async (req, res) => {
   }
 });
 
+// Teacher: Edit Existing Course
+app.put('/api/classes/:id', verifyToken, async (req, res) => {
+  if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Only teachers can edit classes.' });
+  }
+
+  const classId = req.params.id;
+  const { title, description, start_time, duration_minutes, student_limit } = req.body;
+
+  try {
+    const [rows] = await db.query(
+      'SELECT id, teacher_id, title, description, start_time, duration_minutes, student_limit, status FROM live_classes WHERE id = ?',
+      [classId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Class not found.' });
+    }
+
+    const cls = rows[0];
+    if (Number(cls.teacher_id) !== Number(req.user.id) && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied: You do not own this course.' });
+    }
+
+    // Validate using validateClassInput
+    const validation = validateClassInput({ title, description, start_time, duration_minutes, student_limit });
+    if (!validation.valid) {
+      // If start_time validation failed solely because it was unchanged from the existing time, permit it
+      const currentStartIso = normalizeToIsoString(cls.start_time);
+      const incomingStart = new Date(start_time);
+      const existingStart = currentStartIso ? new Date(currentStartIso) : null;
+      const isSameStartTime = existingStart && Math.abs(incomingStart.getTime() - existingStart.getTime()) < 60000;
+
+      if (!isSameStartTime || validation.error !== 'Start time cannot be in the past.') {
+        return res.status(400).json({ message: validation.error });
+      }
+    }
+
+    const startIso = normalizeToIsoString(start_time);
+    const mysql_start_time = new Date(startIso).toISOString().slice(0, 19).replace('T', ' ');
+
+    await db.query(
+      `UPDATE live_classes 
+       SET title = ?, description = ?, start_time = ?, duration_minutes = ?, student_limit = ?
+       WHERE id = ?`,
+      [
+        title.trim(),
+        description.trim(),
+        mysql_start_time,
+        validation.sanitizedDuration,
+        validation.sanitizedLimit,
+        classId
+      ]
+    );
+
+    res.json({
+      message: 'Course updated successfully!',
+      class: {
+        id: Number(classId),
+        title: title.trim(),
+        description: description.trim(),
+        start_time: startIso,
+        duration_minutes: validation.sanitizedDuration,
+        student_limit: validation.sanitizedLimit
+      }
+    });
+  } catch (error) {
+    console.error('Update class error:', error);
+    res.status(500).json({ message: 'Internal server error.', details: error.message });
+  }
+});
+
+// Teacher: Relaunch Course (Relaunch Now OR Pick Date & Time)
+app.post('/api/classes/:id/relaunch', verifyToken, async (req, res) => {
+  if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Only teachers can relaunch classes.' });
+  }
+
+  const classId = req.params.id;
+  const { immediate, start_time } = req.body || {};
+
+  try {
+    const [rows] = await db.query(
+      'SELECT id, teacher_id, title, description, duration_minutes, student_limit FROM live_classes WHERE id = ?',
+      [classId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Original class not found.' });
+    }
+
+    const original = rows[0];
+    if (Number(original.teacher_id) !== Number(req.user.id) && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied: You do not own this course.' });
+    }
+
+    let targetStartTime;
+    if (immediate || !start_time) {
+      // Relaunch Now: scheduled for right now
+      targetStartTime = new Date();
+    } else {
+      targetStartTime = new Date(start_time);
+      if (isNaN(targetStartTime.getTime())) {
+        return res.status(400).json({ message: 'Invalid start time format.' });
+      }
+      const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
+      if (targetStartTime.getTime() < tenMinutesAgo) {
+        return res.status(400).json({ message: 'Scheduled start time cannot be in the past.' });
+      }
+    }
+
+    const mysql_start_time = targetStartTime.toISOString().slice(0, 19).replace('T', ' ');
+    const meeting_room_id = `Madrastak-${crypto.randomUUID()}`;
+
+    // Insert as an independent new class record with 0 bookings and 0 attendance
+    const [insertResult] = await db.query(
+      `INSERT INTO live_classes 
+       (teacher_id, title, description, start_time, duration_minutes, meeting_room_id, student_limit, status) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled')`,
+      [
+        req.user.id,
+        original.title, // Exact same title (do NOT append date/time)
+        original.description,
+        mysql_start_time,
+        original.duration_minutes || 60,
+        meeting_room_id,
+        original.student_limit || 20
+      ]
+    );
+
+    res.status(201).json({
+      message: 'Course relaunched successfully!',
+      classId: insertResult.insertId,
+      meeting_room_id,
+      title: original.title,
+      start_time: targetStartTime.toISOString(),
+      duration_minutes: original.duration_minutes || 60,
+      student_limit: original.student_limit || 20,
+      status: 'scheduled'
+    });
+  } catch (error) {
+    console.error('Relaunch class error:', error);
+    res.status(500).json({ message: 'Internal server error.', details: error.message });
+  }
+});
+
+// Teacher: Extend Active Live Class
+app.post('/api/classes/:id/extend', verifyToken, async (req, res) => {
+  if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Only instructors can extend live classes.' });
+  }
+
+  const classId = req.params.id;
+  const { extensionMinutes } = req.body || {};
+
+  const minutesToAdd = parseInt(extensionMinutes, 10);
+  if (isNaN(minutesToAdd) || minutesToAdd <= 0 || minutesToAdd > 240) {
+    return res.status(400).json({ message: 'Extension minutes must be a positive integer (up to 240 minutes).' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      'SELECT id, teacher_id, title, start_time, duration_minutes, status FROM live_classes WHERE id = ?',
+      [classId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Class not found.' });
+    }
+
+    const cls = rows[0];
+    if (Number(cls.teacher_id) !== Number(req.user.id) && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied: Only the course instructor can extend this lecture.' });
+    }
+
+    if (cls.status === 'ended') {
+      return res.status(400).json({ message: 'Cannot extend a lecture that has already ended.' });
+    }
+
+    const currentDuration = Number(cls.duration_minutes) || 60;
+    const newDuration = currentDuration + minutesToAdd;
+
+    await db.query(
+      'UPDATE live_classes SET duration_minutes = ? WHERE id = ?',
+      [newDuration, classId]
+    );
+
+    res.json({
+      message: `Lecture extended by ${minutesToAdd} minutes. New duration: ${newDuration} minutes.`,
+      classId: Number(classId),
+      addedMinutes: minutesToAdd,
+      newDurationMinutes: newDuration
+    });
+  } catch (error) {
+    console.error('Extend class error:', error);
+    res.status(500).json({ message: 'Internal server error.', details: error.message });
+  }
+});
+
 // ==========================================
 // Booking & Capacity Routes
 // ==========================================
@@ -887,6 +1086,11 @@ app.post('/api/classes/:id/attendance/heartbeat', verifyToken, async (req, res) 
 
     await db.query(query, params).catch(() => {});
     res.json({ ended: false, message: 'Heartbeat recorded.' });
+    res.json({ 
+      ended: false, 
+      message: 'Heartbeat recorded.',
+      duration_minutes: classRows[0]?.duration_minutes ? Number(classRows[0].duration_minutes) : undefined
+    });
   } catch (error) {
     console.error('Attendance heartbeat error:', error);
     res.status(500).json({ message: 'Internal server error.' });

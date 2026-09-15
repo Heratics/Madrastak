@@ -6,6 +6,8 @@ import {
   LayoutDashboard, BookOpen, PlusCircle, User, Settings, 
   LogOut, Video, Users, Clock, Trash2, CheckCircle, GraduationCap, 
   X, AlertCircle, Camera, UserCheck, Calendar, ShieldAlert, Archive 
+  X, AlertCircle, Camera, UserCheck, Calendar, ShieldAlert, Archive,
+  RotateCcw, Edit3 
 } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -25,6 +27,28 @@ export default function TeacherDashboard() {
     loading: false, 
     data: null, 
     error: null 
+  });
+
+  // Relaunch Course Modal State
+  const [relaunchModal, setRelaunchModal] = useState({
+    open: false,
+    cls: null,
+    mode: 'options', // 'options' | 'pick_time'
+    pickedTime: '',
+    submitting: false
+  });
+
+  // Edit Course Modal State
+  const [editModal, setEditModal] = useState({
+    open: false,
+    classId: null,
+    title: '',
+    description: '',
+    startTime: '',
+    isNoLimitDuration: false,
+    durationMinutes: '60',
+    studentLimit: '20',
+    submitting: false
   });
 
   // Create Class Form State
@@ -275,6 +299,165 @@ export default function TeacherDashboard() {
     }
   };
 
+  // --- Relaunch Course Handlers ---
+  const handleOpenRelaunch = (cls) => {
+    // Default pickedTime to 1 hour from now formatted as local ISO
+    const d = new Date(Date.now() + 60 * 60 * 1000);
+    const offsetMs = d.getTimezoneOffset() * 60000;
+    const localIso = new Date(d.getTime() - offsetMs).toISOString().slice(0, 16);
+
+    setRelaunchModal({
+      open: true,
+      cls,
+      mode: 'options',
+      pickedTime: localIso,
+      submitting: false
+    });
+  };
+
+  const handleRelaunchNow = async () => {
+    if (!relaunchModal.cls) return;
+    setRelaunchModal(prev => ({ ...prev, submitting: true }));
+    try {
+      const currentToken = getValidToken() || token;
+      const res = await fetch(`${API_URL}/api/classes/${relaunchModal.cls.id}/relaunch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({ immediate: true })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to relaunch course');
+
+      showToast('Course relaunched successfully! New session is ready.');
+      setRelaunchModal({ open: false, cls: null, mode: 'options', pickedTime: '', submitting: false });
+      await fetchTeacherClasses();
+      setActiveTab('classes');
+      setClassesSubTab('upcoming');
+    } catch (err) {
+      showToast(err.message, 'error');
+      setRelaunchModal(prev => ({ ...prev, submitting: false }));
+    }
+  };
+
+  const handleRelaunchWithTime = async (e) => {
+    e.preventDefault();
+    if (!relaunchModal.cls) return;
+    if (!relaunchModal.pickedTime) {
+      showToast('Please select a date and time.', 'error');
+      return;
+    }
+    const chosenTimestamp = new Date(relaunchModal.pickedTime).getTime();
+    if (chosenTimestamp < Date.now() - (5 * 60 * 1000)) {
+      showToast('Scheduled date and time cannot be in the past.', 'error');
+      return;
+    }
+
+    setRelaunchModal(prev => ({ ...prev, submitting: true }));
+    try {
+      const currentToken = getValidToken() || token;
+      const res = await fetch(`${API_URL}/api/classes/${relaunchModal.cls.id}/relaunch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({ start_time: new Date(relaunchModal.pickedTime).toISOString() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to schedule relaunched course');
+
+      showToast('Course relaunched and scheduled successfully!');
+      setRelaunchModal({ open: false, cls: null, mode: 'options', pickedTime: '', submitting: false });
+      await fetchTeacherClasses();
+      setActiveTab('classes');
+      setClassesSubTab('upcoming');
+    } catch (err) {
+      showToast(err.message, 'error');
+      setRelaunchModal(prev => ({ ...prev, submitting: false }));
+    }
+  };
+
+  // --- Edit Course Handlers ---
+  const handleOpenEdit = (cls) => {
+    let localIso = '';
+    if (cls.start_time) {
+      const d = new Date(cls.start_time);
+      const offsetMs = d.getTimezoneOffset() * 60000;
+      localIso = new Date(d.getTime() - offsetMs).toISOString().slice(0, 16);
+    }
+    const isNoLimit = cls.duration_minutes >= 999999;
+    setEditModal({
+      open: true,
+      classId: cls.id,
+      title: cls.title || '',
+      description: cls.description || '',
+      startTime: localIso,
+      isNoLimitDuration: isNoLimit,
+      durationMinutes: isNoLimit ? '60' : String(cls.duration_minutes || 60),
+      studentLimit: String(cls.student_limit || 20),
+      submitting: false
+    });
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (!editModal.title.trim() || editModal.title.trim().length < 3) {
+      showToast('Class title must be at least 3 characters long.', 'error');
+      return;
+    }
+    if (!editModal.description.trim() || editModal.description.trim().length < 5) {
+      showToast('Please provide a brief description of the class.', 'error');
+      return;
+    }
+    if (!editModal.startTime) {
+      showToast('Please select a scheduled start date and time.', 'error');
+      return;
+    }
+
+    const finalDuration = editModal.isNoLimitDuration ? 999999 : parseInt(editModal.durationMinutes);
+    if (!editModal.isNoLimitDuration && (!finalDuration || finalDuration <= 0)) {
+      showToast('Duration must be a positive number of minutes.', 'error');
+      return;
+    }
+
+    const parsedLimit = Number(editModal.studentLimit);
+    if (!editModal.studentLimit || !Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 20) {
+      showToast('Student limit must be an integer between 1 and 20 (maximum 20 students).', 'error');
+      return;
+    }
+
+    setEditModal(prev => ({ ...prev, submitting: true }));
+    try {
+      const currentToken = getValidToken() || token;
+      const res = await fetch(`${API_URL}/api/classes/${editModal.classId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({
+          title: editModal.title.trim(),
+          description: editModal.description.trim(),
+          start_time: new Date(editModal.startTime).toISOString(),
+          duration_minutes: finalDuration,
+          student_limit: parsedLimit
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to update course');
+
+      showToast('Course updated successfully!');
+      setEditModal({ open: false, classId: null, title: '', description: '', startTime: '', isNoLimitDuration: false, durationMinutes: '60', studentLimit: '20', submitting: false });
+      await fetchTeacherClasses();
+    } catch (err) {
+      showToast(err.message, 'error');
+      setEditModal(prev => ({ ...prev, submitting: false }));
+    }
+  };
+
   const renderStatusBadge = (status) => {
     if (status === 'live') {
       return (
@@ -419,6 +602,247 @@ export default function TeacherDashboard() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Relaunch Course Modal */}
+      {relaunchModal.open && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 animate-fade-in">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">Relaunch Course</h3>
+                  <p className="text-xs text-slate-500">Create a new independent cohort with fresh attendance.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setRelaunchModal({ open: false, cls: null, mode: 'options', pickedTime: '', submitting: false })}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-1.5 text-xs text-slate-600">
+                <div className="font-bold text-sm text-slate-900 truncate">{relaunchModal.cls?.title}</div>
+                <p className="line-clamp-2 text-slate-500">{relaunchModal.cls?.description}</p>
+                <div className="flex gap-4 pt-1 text-[11px] text-slate-400">
+                  <span>Duration: {relaunchModal.cls?.duration_minutes >= 999999 ? 'Self-Paced' : `${relaunchModal.cls?.duration_minutes}m`}</span>
+                  <span>•</span>
+                  <span>Limit: {relaunchModal.cls?.student_limit || 20} students</span>
+                </div>
+              </div>
+
+              {relaunchModal.mode === 'options' ? (
+                <div className="space-y-3">
+                  <button
+                    onClick={handleRelaunchNow}
+                    disabled={relaunchModal.submitting}
+                    className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white p-4 rounded-2xl font-bold text-sm shadow-md shadow-red-600/20 transition flex items-center justify-between cursor-pointer"
+                  >
+                    <div className="text-left">
+                      <div className="font-black">Relaunch Now</div>
+                      <div className="text-xs text-white/80 font-normal">Start a new session immediately with zero bookings.</div>
+                    </div>
+                    <RotateCcw className="w-5 h-5 shrink-0" />
+                  </button>
+
+                  <button
+                    onClick={() => setRelaunchModal(prev => ({ ...prev, mode: 'pick_time' }))}
+                    disabled={relaunchModal.submitting}
+                    className="w-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 p-4 rounded-2xl font-bold text-sm transition flex items-center justify-between cursor-pointer shadow-sm"
+                  >
+                    <div className="text-left">
+                      <div className="font-black">Pick Date & Time</div>
+                      <div className="text-xs text-slate-500 font-normal">Schedule this course for a future date & time.</div>
+                    </div>
+                    <Calendar className="w-5 h-5 text-slate-400 shrink-0" />
+                  </button>
+
+                  <button
+                    onClick={() => setRelaunchModal({ open: false, cls: null, mode: 'options', pickedTime: '', submitting: false })}
+                    className="w-full py-3 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-700 transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleRelaunchWithTime} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Select Date & Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={relaunchModal.pickedTime}
+                      onChange={(e) => setRelaunchModal(prev => ({ ...prev, pickedTime: e.target.value }))}
+                      min={minDateTime}
+                      required
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setRelaunchModal(prev => ({ ...prev, mode: 'options' }))}
+                      className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-xl text-xs font-semibold transition cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={relaunchModal.submitting}
+                      className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white py-3 rounded-xl text-xs font-bold shadow-md shadow-red-600/20 transition cursor-pointer"
+                    >
+                      {relaunchModal.submitting ? 'Scheduling...' : 'Schedule Relaunch'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Course Modal */}
+      {editModal.open && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200 animate-fade-in">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center">
+                  <Edit3 className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">Edit Course</h3>
+                  <p className="text-xs text-slate-500">Update course details and settings.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setEditModal(prev => ({ ...prev, open: false }))}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="p-6 overflow-y-auto space-y-5 flex-1">
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-1.5">Class Title</label>
+                <input 
+                  type="text" 
+                  value={editModal.title} 
+                  onChange={(e) => setEditModal(prev => ({ ...prev, title: e.target.value }))} 
+                  required 
+                  minLength={3}
+                  maxLength={200}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-1.5">Description</label>
+                <textarea 
+                  value={editModal.description} 
+                  onChange={(e) => setEditModal(prev => ({ ...prev, description: e.target.value }))} 
+                  required 
+                  minLength={5}
+                  maxLength={3000}
+                  rows="3"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-1.5">Start Date & Time</label>
+                  <input 
+                    type="datetime-local" 
+                    value={editModal.startTime} 
+                    onChange={(e) => setEditModal(prev => ({ ...prev, startTime: e.target.value }))} 
+                    required 
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider">Duration (Minutes)</label>
+                    <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={editModal.isNoLimitDuration}
+                        onChange={(e) => setEditModal(prev => ({ ...prev, isNoLimitDuration: e.target.checked }))}
+                        className="rounded border-slate-300 text-red-600 focus:ring-0"
+                      />
+                      No Limit
+                    </label>
+                  </div>
+                  <input 
+                    type="number" 
+                    value={editModal.durationMinutes} 
+                    onChange={(e) => setEditModal(prev => ({ ...prev, durationMinutes: e.target.value }))} 
+                    disabled={editModal.isNoLimitDuration}
+                    min="1"
+                    max="1440"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition disabled:opacity-40"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-1.5">
+                  Student Limit (1 to 20 Students)
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={editModal.studentLimit}
+                    onChange={(e) => setEditModal(prev => ({ ...prev, studentLimit: e.target.value }))}
+                    className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                  >
+                    {[...Array(20)].map((_, i) => (
+                      <option key={i + 1} value={String(i + 1)}>
+                        {i + 1} {i === 0 ? 'student' : 'students'}
+                      </option>
+                    ))}
+                  </select>
+                  <input 
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={editModal.studentLimit}
+                    onChange={(e) => setEditModal(prev => ({ ...prev, studentLimit: e.target.value }))}
+                    placeholder="Or type 1-20"
+                    className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 text-sm focus:outline-none focus:border-red-600 transition"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Maximum 20 students allowed per live class.</p>
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditModal(prev => ({ ...prev, open: false }))}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-xl text-xs font-semibold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editModal.submitting}
+                  className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white py-3 rounded-xl text-xs font-bold shadow-md shadow-red-600/20 transition cursor-pointer"
+                >
+                  {editModal.submitting ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -592,6 +1016,7 @@ export default function TeacherDashboard() {
 
                       <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
                         <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <button 
                             onClick={() => handleStartClass(cls.id, cls.status)}
                             className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
@@ -602,8 +1027,23 @@ export default function TeacherDashboard() {
                           <button 
                             onClick={() => handleOpenAttendance(cls.id)}
                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
                           >
                             <UserCheck className="w-3.5 h-3.5 text-slate-500" /> Attendance
+                          </button>
+                          <button 
+                            onClick={() => handleOpenEdit(cls)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            title="Edit Course"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-slate-600" /> Edit
+                          </button>
+                          <button 
+                            onClick={() => handleOpenRelaunch(cls)}
+                            className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            title="Relaunch Course"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" /> Relaunch
                           </button>
                         </div>
                         <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition cursor-pointer">
@@ -661,6 +1101,28 @@ export default function TeacherDashboard() {
                         >
                           <UserCheck className="w-3.5 h-3.5 text-emerald-600" /> View Attendance & Roster
                         </button>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button 
+                            onClick={() => handleOpenAttendance(cls.id)}
+                            className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                          >
+                            <UserCheck className="w-3.5 h-3.5 text-emerald-600" /> Attendance
+                          </button>
+                          <button 
+                            onClick={() => handleOpenRelaunch(cls)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            title="Relaunch this concluded course"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" /> Relaunch
+                          </button>
+                          <button 
+                            onClick={() => handleOpenEdit(cls)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            title="Edit Course"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-slate-600" /> Edit
+                          </button>
+                        </div>
                         <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition cursor-pointer" title="Delete class record">
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -738,6 +1200,7 @@ export default function TeacherDashboard() {
 
                       <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
                         <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <button 
                             onClick={() => handleStartClass(cls.id, cls.status)}
                             className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
@@ -748,8 +1211,23 @@ export default function TeacherDashboard() {
                           <button 
                             onClick={() => handleOpenAttendance(cls.id)}
                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
                           >
                             <UserCheck className="w-3.5 h-3.5 text-slate-500" /> Attendance
+                          </button>
+                          <button 
+                            onClick={() => handleOpenEdit(cls)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            title="Edit Course"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-slate-600" /> Edit
+                          </button>
+                          <button 
+                            onClick={() => handleOpenRelaunch(cls)}
+                            className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            title="Relaunch Course"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" /> Relaunch
                           </button>
                         </div>
 
@@ -797,15 +1275,31 @@ export default function TeacherDashboard() {
 
                       <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
                         <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <button 
                             onClick={() => handleOpenAttendance(cls.id)}
                             className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
                           >
                             <UserCheck className="w-4 h-4" /> View Attendance & Roster
+                            <UserCheck className="w-4 h-4" /> View Attendance
                           </button>
                           <span className="bg-slate-100 text-slate-400 border border-slate-200 text-xs font-semibold px-3 py-2 rounded-xl select-none">
                             Lecture Concluded
                           </span>
+                          <button 
+                            onClick={() => handleOpenRelaunch(cls)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            title="Relaunch this concluded course"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" /> Relaunch
+                          </button>
+                          <button 
+                            onClick={() => handleOpenEdit(cls)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                            title="Edit Course"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-slate-600" /> Edit
+                          </button>
                         </div>
 
                         <button onClick={() => handleDeleteClass(cls.id)} className="text-slate-400 hover:text-red-600 p-2 transition cursor-pointer" title="Delete class record">

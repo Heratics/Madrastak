@@ -6,6 +6,8 @@ import { getValidToken, isTokenExpired } from '../utils/auth';
 import { 
   GraduationCap, ArrowLeft, Video, Clock, AlertCircle, 
   CheckCircle, User, LogOut, PhoneOff, ShieldAlert, Loader2 
+  CheckCircle, User, LogOut, PhoneOff, ShieldAlert, Loader2,
+  Plus, X, Volume2, Sparkles 
 } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -22,8 +24,17 @@ export default function Classroom() {
   const [isEnding, setIsEnding] = useState(false);
   const [concludedMessage, setConcludedMessage] = useState(null);
 
+  // Live Extension & Countdown States
+  const [durationMinutes, setDurationMinutes] = useState(60);
+  const [remainingSeconds, setRemainingSeconds] = useState(null);
+  const [showExtendModal, setShowExtendModal] = useState(false);
+  const [customMinutes, setCustomMinutes] = useState('');
+  const [isExtending, setIsExtending] = useState(false);
+  const [extendToast, setExtendToast] = useState(null);
+
   const jitsiApiRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
+  const hasWarnedForEndTimeRef = useRef(null);
   const token = getValidToken();
 
   // 1. Authorize user and retrieve meeting credentials
@@ -59,6 +70,9 @@ export default function Classroom() {
 
       setWaitingState(null);
       setRoomData(data);
+      if (data.duration_minutes) {
+        setDurationMinutes(Number(data.duration_minutes));
+      }
     } catch (err) {
       setWaitingState(null);
       setError(err.message);
@@ -110,6 +124,11 @@ export default function Classroom() {
             body: JSON.stringify({ sessionId })
           });
           const data = await res.json();
+
+          // If the duration was extended, sync it across all participants seamlessly
+          if (data && data.duration_minutes) {
+            setDurationMinutes(prev => Math.max(prev, Number(data.duration_minutes)));
+          }
 
           // If the teacher has ended the lecture or duration expired
           if (data && data.ended) {
@@ -252,6 +271,113 @@ export default function Classroom() {
     }
   };
 
+  // --- Live Extension & Audio Chime Helpers ---
+  const playNearEndChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+
+      // Tone 1: 587.33 Hz (D5)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(587.33, now);
+      gain1.gain.setValueAtTime(0.3, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.35);
+
+      // Tone 2: 880 Hz (A5)
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(880, now + 0.15);
+      gain2.gain.setValueAtTime(0.35, now + 0.15);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.15);
+      osc2.stop(now + 0.6);
+    } catch (e) {
+      console.warn('[Classroom] Audio chime playback error:', e);
+    }
+  };
+
+  // Live countdown and near-end notification trigger
+  useEffect(() => {
+    if (!roomData?.start_time || durationMinutes >= 999999) return;
+
+    const timer = setInterval(() => {
+      const startTimeMs = new Date(roomData.start_time).getTime();
+      const endTimeMs = startTimeMs + (durationMinutes * 60 * 1000);
+      const secondsLeft = Math.max(0, Math.floor((endTimeMs - Date.now()) / 1000));
+      setRemainingSeconds(secondsLeft);
+
+      // Trigger near-end popup only for host (teacher) around 5 minutes remaining (<= 300s)
+      if (roomData.isHost && secondsLeft <= 300 && secondsLeft > 0) {
+        if (hasWarnedForEndTimeRef.current !== endTimeMs) {
+          hasWarnedForEndTimeRef.current = endTimeMs;
+          playNearEndChime();
+          setShowExtendModal(true);
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [roomData?.start_time, roomData?.isHost, durationMinutes]);
+
+  const handleExtendLecture = async (minutesToAdd) => {
+    const parsed = parseInt(minutesToAdd, 10);
+    if (isNaN(parsed) || parsed <= 0) {
+      alert('Please enter a valid positive number of minutes.');
+      return;
+    }
+
+    setIsExtending(true);
+    try {
+      const activeToken = getValidToken() || token;
+      const res = await fetch(`${API_URL}/api/classes/${id}/extend`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${activeToken}`
+        },
+        body: JSON.stringify({ extensionMinutes: parsed })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to extend class');
+
+      const updatedDuration = Number(data.newDurationMinutes);
+      setDurationMinutes(updatedDuration);
+      setShowExtendModal(false);
+      setCustomMinutes('');
+      setExtendToast(`Lecture extended by +${parsed} minutes! New total: ${updatedDuration}m.`);
+      setTimeout(() => setExtendToast(null), 4500);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsExtending(false);
+    }
+  };
+
+  const formatTimeRemaining = (totalSec) => {
+    if (totalSec === null || totalSec === undefined) return '';
+    if (durationMinutes >= 999999) return 'Ongoing';
+    if (totalSec <= 0) return 'Ending now';
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    if (mins >= 60) {
+      const hrs = Math.floor(mins / 60);
+      const remMins = mins % 60;
+      return `${hrs}h ${remMins}m`;
+    }
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
   // Loading State
   if (loading) {
     return (
@@ -387,6 +513,109 @@ export default function Classroom() {
         </div>
       )}
 
+      {/* Extension Toast Notification */}
+      {extendToast && (
+        <div className="fixed top-20 right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-emerald-600 text-white rounded-2xl shadow-xl text-xs font-bold animate-bounce border border-emerald-500">
+          <CheckCircle className="w-4 h-4" />
+          <span>{extendToast}</span>
+        </div>
+      )}
+
+      {/* Near-End / Manual Extend Lecture Modal */}
+      {showExtendModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-6 shadow-2xl text-white animate-fade-in">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Extend Live Lecture</h3>
+                  <p className="text-xs text-slate-400">
+                    {remainingSeconds !== null && remainingSeconds <= 300
+                      ? `Class ending soon (${formatTimeRemaining(remainingSeconds)} left)`
+                      : `Current duration: ${durationMinutes} minutes`}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowExtendModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Extend the scheduled duration to keep the virtual classroom running seamlessly. Students will remain connected without interruption.
+            </p>
+
+            {/* Quick Extension Buttons */}
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                onClick={() => handleExtendLecture(15)}
+                disabled={isExtending}
+                className="bg-slate-800/90 hover:bg-emerald-600/30 hover:border-emerald-500/50 border border-slate-700 py-3 rounded-2xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50"
+              >
+                <span className="text-base font-black text-emerald-400">+15</span>
+                <span className="text-[10px] text-slate-400 font-normal">Minutes</span>
+              </button>
+              <button
+                onClick={() => handleExtendLecture(30)}
+                disabled={isExtending}
+                className="bg-slate-800/90 hover:bg-emerald-600/30 hover:border-emerald-500/50 border border-slate-700 py-3 rounded-2xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50"
+              >
+                <span className="text-base font-black text-emerald-400">+30</span>
+                <span className="text-[10px] text-slate-400 font-normal">Minutes</span>
+              </button>
+              <button
+                onClick={() => handleExtendLecture(60)}
+                disabled={isExtending}
+                className="bg-slate-800/90 hover:bg-emerald-600/30 hover:border-emerald-500/50 border border-slate-700 py-3 rounded-2xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50"
+              >
+                <span className="text-base font-black text-emerald-400">+60</span>
+                <span className="text-[10px] text-slate-400 font-normal">Minutes</span>
+              </button>
+            </div>
+
+            {/* Custom Minutes Input */}
+            <div className="space-y-2 pt-2 border-t border-slate-800/80">
+              <label className="block text-xs font-semibold text-slate-300">
+                Or Enter Custom Additional Minutes
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  max="240"
+                  value={customMinutes}
+                  onChange={(e) => setCustomMinutes(e.target.value)}
+                  placeholder="e.g. 20, 45, 90"
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition"
+                />
+                <button
+                  onClick={() => handleExtendLecture(customMinutes)}
+                  disabled={isExtending || !customMinutes || parseInt(customMinutes) <= 0}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer shadow-md shadow-emerald-600/20"
+                >
+                  {isExtending ? 'Extending...' : 'Apply'}
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setShowExtendModal(false)}
+                className="text-xs text-slate-400 hover:text-white px-4 py-2 transition cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Classroom Bar */}
       <header className="h-16 bg-slate-900/90 border-b border-slate-800/80 px-6 flex items-center justify-between z-30 shrink-0 backdrop-blur-md">
         {/* Left: Madrastak Brand & Class Info */}
@@ -427,6 +656,30 @@ export default function Classroom() {
 
         {/* Right: Actions */}
         <div className="flex items-center gap-3">
+          {/* Live Countdown Badge */}
+          {remainingSeconds !== null && (
+            <div className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
+              remainingSeconds <= 300 
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse' 
+                : 'bg-slate-800/80 text-slate-300 border-slate-700/60'
+            }`}>
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>{formatTimeRemaining(remainingSeconds)} left</span>
+            </div>
+          )}
+
+          {/* Teacher: Manual Extend Button */}
+          {roomData?.isHost && (
+            <button
+              onClick={() => setShowExtendModal(true)}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm hover:border-slate-600"
+              title="Extend live class duration"
+            >
+              <Plus className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Extend</span>
+            </button>
+          )}
+
           {roomData?.isHost && (
             <button
               onClick={handleEndLecture}

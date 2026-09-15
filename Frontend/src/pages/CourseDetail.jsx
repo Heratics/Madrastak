@@ -5,6 +5,7 @@ import { getValidToken } from '../utils/auth';
 import { 
   GraduationCap, ArrowLeft, Clock, User, Video, Users, 
   CheckCircle, AlertCircle, X, Check, XCircle 
+  CheckCircle, AlertCircle, X, Check, XCircle, Share2, Copy 
 } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -120,6 +121,41 @@ export default function CourseDetail() {
     navigate(`/classroom/${classDetails.id}`);
   };
 
+  const handleShare = async () => {
+    const courseUrl = window.location.href;
+    const sharePayload = {
+      title: classDetails?.title || 'Madrastak Live Course',
+      text: classDetails?.description || 'Check out this live lecture on Madrastak!',
+      url: courseUrl
+    };
+
+    if (navigator.share) {
+      try {
+        await navigator.share(sharePayload);
+        showToast('Course link shared successfully!');
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(courseUrl);
+      } else {
+        const dummy = document.createElement('input');
+        dummy.value = courseUrl;
+        document.body.appendChild(dummy);
+        dummy.select();
+        document.execCommand('copy');
+        document.body.removeChild(dummy);
+      }
+      showToast('Course link copied to clipboard!');
+    } catch (err) {
+      showToast('Failed to copy course link.', 'error');
+    }
+  };
+
   if (loading) {
     return <div className="min-h-screen bg-white flex items-center justify-center text-slate-500 font-medium">Loading course details...</div>;
   }
@@ -208,6 +244,24 @@ export default function CourseDetail() {
               <Video className="w-4 h-4 text-red-500" /> 
               {classDetails.duration_minutes >= 999999 ? 'Self-Paced / Ongoing' : `${classDetails.duration_minutes} mins duration`}
             </span>
+          <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-800 text-sm font-medium text-slate-300">
+            <div className="flex flex-wrap items-center gap-6">
+              <span className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-red-500" /> 
+                {new Date(classDetails.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+              </span>
+              <span className="flex items-center gap-2">
+                <Video className="w-4 h-4 text-red-500" /> 
+                {classDetails.duration_minutes >= 999999 ? 'Self-Paced / Ongoing' : `${classDetails.duration_minutes} mins duration`}
+              </span>
+            </div>
+            <button
+              onClick={handleShare}
+              className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer border border-white/15 backdrop-blur-sm shadow-sm"
+              title="Share this course"
+            >
+              <Share2 className="w-4 h-4 text-red-400" /> Share Course
+            </button>
           </div>
         </div>
 
@@ -359,6 +413,16 @@ export default function CourseDetail() {
                   <p className="text-xs text-slate-400">Instant access to live classroom upon booking.</p>
                 </div>
               )}
+
+              {/* Share Course Button */}
+              <div className="pt-3 border-t border-slate-200/80">
+                <button
+                  onClick={handleShare}
+                  className="w-full bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 py-3 rounded-2xl font-semibold text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm hover:text-red-600"
+                >
+                  <Share2 className="w-4 h-4 text-red-600" /> Share Course
+                </button>
+              </div>
             </div>
           </div>
         </div>

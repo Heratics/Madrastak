@@ -1085,7 +1085,6 @@ app.post('/api/classes/:id/attendance/heartbeat', verifyToken, async (req, res) 
     }
 
     await db.query(query, params).catch(() => {});
-    res.json({ ended: false, message: 'Heartbeat recorded.' });
     res.json({ 
       ended: false, 
       message: 'Heartbeat recorded.',

@@ -103,8 +103,6 @@ function generateJaasToken({ user, roomName, isTeacher, durationMinutes = 60 }) 
 
   const now = Math.floor(Date.now() / 1000);
   const nbf = now - 10;
-  // Token valid for duration + 2 hour buffer, minimum 2 hours (7200s)
-  const validitySeconds = Math.max((Number(durationMinutes) || 60) * 60 + 7200, 7200);
   // Token valid for scheduled duration + 4 hour buffer, minimum 4 hours (14400s)
   // Ensures any live class extensions never cause the token to expire mid-meeting
   const validitySeconds = Math.max((Number(durationMinutes) || 60) * 60 + 14400, 14400);

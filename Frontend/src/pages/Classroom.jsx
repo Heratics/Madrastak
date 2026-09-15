@@ -5,7 +5,6 @@ import { AuthContext } from '../context/AuthContext';
 import { getValidToken, isTokenExpired } from '../utils/auth';
 import { 
   GraduationCap, ArrowLeft, Video, Clock, AlertCircle, 
-  CheckCircle, User, LogOut, PhoneOff, ShieldAlert, Loader2 
   CheckCircle, User, LogOut, PhoneOff, ShieldAlert, Loader2,
   Plus, X, Volume2, Sparkles 
 } from 'lucide-react';

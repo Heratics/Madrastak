@@ -4,7 +4,6 @@ import { AuthContext } from '../context/AuthContext';
 import { getValidToken } from '../utils/auth';
 import { 
   GraduationCap, ArrowLeft, Clock, User, Video, Users, 
-  CheckCircle, AlertCircle, X, Check, XCircle 
   CheckCircle, AlertCircle, X, Check, XCircle, Share2, Copy 
 } from 'lucide-react';
 import { API_URL } from '../config';
@@ -235,15 +234,6 @@ export default function CourseDetail() {
             <p className="text-slate-300 text-base max-w-2xl leading-relaxed">{classDetails.description}</p>
           </div>
 
-          <div className="relative z-10 flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800 text-sm font-medium text-slate-300">
-            <span className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-red-500" /> 
-              {new Date(classDetails.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-            </span>
-            <span className="flex items-center gap-2">
-              <Video className="w-4 h-4 text-red-500" /> 
-              {classDetails.duration_minutes >= 999999 ? 'Self-Paced / Ongoing' : `${classDetails.duration_minutes} mins duration`}
-            </span>
           <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-800 text-sm font-medium text-slate-300">
             <div className="flex flex-wrap items-center gap-6">
               <span className="flex items-center gap-2">

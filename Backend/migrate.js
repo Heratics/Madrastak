@@ -186,6 +186,21 @@ async function runMigrations() {
     `);
     console.log('✔ `admin_actions` table verified.');
 
+    // 9. Singleton marker used by the optional startup admin bootstrap.
+    console.log('Checking admin_bootstrap table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_bootstrap (
+        id TINYINT UNSIGNED PRIMARY KEY,
+        admin_id INT NULL,
+        completed_at TIMESTAMP NULL,
+        FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await pool.query(
+      'INSERT INTO admin_bootstrap (id) VALUES (1) ON DUPLICATE KEY UPDATE id = id'
+    );
+    console.log('✔ `admin_bootstrap` table verified.');
+
     console.log('\n🎉 All migrations completed successfully! Database is up to date.');
   } catch (error) {
     console.error('\n❌ Migration failed with error:', error);

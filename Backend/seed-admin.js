@@ -2,41 +2,72 @@ const bcrypt = require('bcrypt');
 const pool = require('./db');
 
 async function seedAdmin() {
-  const { ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME = 'Madrastak Administrator' } = process.env;
+  const { ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME } = process.env;
 
-  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
-    throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD must be provided through the server environment.');
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD || !ADMIN_NAME) {
+    console.log('Admin bootstrap skipped: required ADMIN_* variables are not configured.');
+    return { created: false, skipped: true };
   }
 
   if (ADMIN_PASSWORD.length < 12) {
     throw new Error('ADMIN_PASSWORD must be at least 12 characters long.');
   }
 
-  const [existing] = await pool.query(
-    'SELECT id, role FROM users WHERE email = ?',
-    [ADMIN_EMAIL]
-  );
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query(
+      'INSERT INTO admin_bootstrap (id) VALUES (1) ON DUPLICATE KEY UPDATE id = id'
+    );
+    await connection.query('SELECT id, completed_at FROM admin_bootstrap WHERE id = 1 FOR UPDATE');
 
-  if (existing.length > 0) {
-    if (existing[0].role !== 'admin') {
-      throw new Error('The requested admin email already belongs to a non-admin account.');
+    const [admins] = await connection.query(
+      "SELECT id FROM users WHERE role = 'admin' LIMIT 1 FOR UPDATE"
+    );
+    if (admins.length > 0) {
+      await connection.rollback();
+      console.log('Admin bootstrap skipped: an administrator already exists.');
+      return { created: false, skipped: true };
     }
-    console.log('Admin account already exists; no credentials were changed.');
-    return;
-  }
 
-  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
-  await pool.query(
-    `INSERT INTO users (full_name, email, password_hash, role, account_status)
-     VALUES (?, ?, ?, 'admin', 'active')`,
-    [ADMIN_NAME, ADMIN_EMAIL, passwordHash]
-  );
-  console.log('Admin account created successfully.');
+    const [sameEmail] = await connection.query(
+      'SELECT id, role FROM users WHERE email = ? FOR UPDATE',
+      [ADMIN_EMAIL]
+    );
+    if (sameEmail.length > 0) {
+      throw new Error('ADMIN_EMAIL already belongs to a non-admin account.');
+    }
+
+    const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+    const [result] = await connection.query(
+      `INSERT INTO users (full_name, email, password_hash, role, account_status)
+       VALUES (?, ?, ?, 'admin', 'active')`,
+      [ADMIN_NAME, ADMIN_EMAIL, passwordHash]
+    );
+    await connection.query(
+      `UPDATE admin_bootstrap
+       SET admin_id = ?, completed_at = CURRENT_TIMESTAMP
+       WHERE id = 1`,
+      [result.insertId]
+    );
+    await connection.commit();
+    console.log('Admin account bootstrap completed.');
+    return { created: true, skipped: false };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
-seedAdmin()
-  .catch((error) => {
-    console.error('Admin seed failed:', error.message);
-    process.exitCode = 1;
-  })
-  .finally(() => pool.end());
+if (require.main === module) {
+  seedAdmin()
+    .catch((error) => {
+      console.error('Admin seed failed:', error.message);
+      process.exitCode = 1;
+    })
+    .finally(() => pool.end());
+}
+
+module.exports = { seedAdmin };

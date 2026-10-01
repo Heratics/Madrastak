@@ -34,6 +34,14 @@ CREATE TABLE IF NOT EXISTS admin_actions (
   INDEX idx_admin_actions_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 6. One-time first-admin bootstrap marker
+CREATE TABLE IF NOT EXISTS admin_bootstrap (
+  id TINYINT UNSIGNED PRIMARY KEY,
+  admin_id INT NULL,
+  completed_at TIMESTAMP NULL,
+  FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 2. Live Classes Table
 CREATE TABLE IF NOT EXISTS live_classes (
   id INT AUTO_INCREMENT PRIMARY KEY,

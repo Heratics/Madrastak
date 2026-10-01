@@ -6,6 +6,7 @@ const crypto = require('crypto');
 require('dotenv').config();
 const db = require('./db');
 const { generateJaasToken } = require('./jaas');
+const { seedAdmin } = require('./seed-admin');
 
 const app = express();
 
@@ -1462,6 +1463,18 @@ app.get('/api/user/profile', verifyToken, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+
+async function startServer() {
+  try {
+    await seedAdmin();
+  } catch (error) {
+    // Bootstrap failures must not prevent normal API startup or expose credentials.
+    console.error('Admin bootstrap unavailable:', error.message);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();

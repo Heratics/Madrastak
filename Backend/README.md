@@ -40,7 +40,7 @@ Provide administrator credentials only through the server environment. Never com
 ```text
 ADMIN_EMAIL=your-admin-email
 ADMIN_PASSWORD=use-a-long-random-password
-ADMIN_NAME=Your Name
+ADMIN_NAME=your-admin-display-name
 ```
 
 Then run:
@@ -49,4 +49,4 @@ Then run:
 npm run seed:admin
 ```
 
-The seed hashes the password with bcrypt, creates an active admin if the email does not exist, and refuses to promote an existing non-admin account. Existing admin credentials are not changed by rerunning the command.
+The same seed logic is also invoked once during backend startup when `ADMIN_EMAIL` and `ADMIN_PASSWORD` are present. If they are absent, normal startup continues without creating an admin. The bootstrap hashes the password with bcrypt, creates an active admin only when no admin exists, records completion in `admin_bootstrap`, and refuses to promote an existing non-admin account. Existing admin credentials are never changed by rerunning the command.

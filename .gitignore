@@ -1,5 +1,11 @@
 node_modules
-.env
+.env*
+!.env.example
+
+# Local build and tool output
+dist
+coverage
+*.local
 
 # Credentials & JaaS Keys
 TEMP/

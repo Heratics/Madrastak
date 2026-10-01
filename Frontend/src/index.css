@@ -6,3 +6,324 @@
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 }
+
+@layer components {
+  .landing-shell {
+    --landing-ink: #17202a;
+    --landing-muted: #66717d;
+    --landing-red: #e23d35;
+    min-height: 100svh;
+    padding: 28px clamp(20px, 4vw, 64px) 22px;
+    color: var(--landing-ink);
+    background: #f4f5f2;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .landing-header,
+  .landing-footer {
+    width: min(100%, 1440px);
+    margin-inline: auto;
+  }
+
+  .landing-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 24px;
+    padding-bottom: 28px;
+  }
+
+  .landing-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--landing-ink);
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    text-decoration: none;
+  }
+
+  .landing-brand-mark {
+    width: 34px;
+    height: 34px;
+    display: inline-grid;
+    place-items: center;
+    color: white;
+    background: var(--landing-red);
+    border-radius: 11px;
+    box-shadow: 0 8px 18px rgb(226 61 53 / 20%);
+  }
+
+  .landing-kicker,
+  .landing-footer {
+    color: var(--landing-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .landing-kicker { margin: 0; }
+
+  .product-panels {
+    width: min(100%, 1440px);
+    min-height: min(680px, calc(100svh - 145px));
+    margin: auto;
+    display: flex;
+    gap: 12px;
+    isolation: isolate;
+  }
+
+  .product-panel {
+    --panel-background: linear-gradient(135deg, #f1d1d0 0%, #d87878 55%, #a63e45 100%);
+    --panel-foreground: #4b151b;
+    --panel-line: rgb(75 21 27 / 18%);
+    position: relative;
+    min-width: 0;
+    flex: 1 1 50%;
+    overflow: hidden;
+    color: var(--panel-foreground);
+    background: var(--panel-background);
+    border-radius: 24px;
+    transition: flex-basis 520ms cubic-bezier(.22, 1, .36, 1), transform 520ms cubic-bezier(.22, 1, .36, 1), filter 520ms ease;
+    animation: panel-arrive 800ms cubic-bezier(.22, 1, .36, 1) both;
+  }
+
+  .product-panel-alamatak {
+    --panel-background: linear-gradient(135deg, #d5eeea 0%, #70bdb5 55%, #287f83 100%);
+    --panel-foreground: #123f45;
+    --panel-line: rgb(18 63 69 / 18%);
+    animation-delay: 100ms;
+  }
+
+  .product-panels.is-madrastak .product-panel-madrastak,
+  .product-panels.is-alamatak .product-panel-alamatak {
+    flex-basis: 60%;
+  }
+
+  .product-panels.is-madrastak .product-panel-alamatak,
+  .product-panels.is-alamatak .product-panel-madrastak {
+    flex-basis: 40%;
+    filter: saturate(.72) brightness(.98);
+  }
+
+  .product-panel::after {
+    position: absolute;
+    inset: auto -12% -28% auto;
+    width: 58%;
+    aspect-ratio: 1;
+    border: 1px solid var(--panel-line);
+    border-radius: 50%;
+    content: '';
+  }
+
+  .panel-grid {
+    position: absolute;
+    inset: 0;
+    opacity: .42;
+    background-image: linear-gradient(var(--panel-line) 1px, transparent 1px), linear-gradient(90deg, var(--panel-line) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: linear-gradient(to bottom, black, transparent 70%);
+  }
+
+  .panel-content {
+    position: relative;
+    z-index: 1;
+    min-height: 100%;
+    padding: clamp(28px, 5vw, 72px);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-topline,
+  .panel-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .panel-icon {
+    width: 52px;
+    height: 52px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--panel-line);
+    border-radius: 15px;
+    background: rgb(255 255 255 / 28%);
+  }
+
+  .panel-index {
+    color: var(--panel-foreground);
+    opacity: .6;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .12em;
+  }
+
+  .panel-copy {
+    max-width: 520px;
+    margin: auto 0;
+    padding: 52px 0;
+  }
+
+  .panel-eyebrow,
+  .dialog-eyebrow {
+    margin: 0 0 18px;
+    color: var(--panel-foreground);
+    opacity: .66;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  .panel-copy h1 {
+    margin: 0;
+    color: var(--panel-foreground);
+    font-size: clamp(42px, 5.8vw, 82px);
+    font-weight: 850;
+    letter-spacing: -0.055em;
+    line-height: .95;
+  }
+
+  .panel-description {
+    max-width: 390px;
+    margin: 26px 0 0;
+    font-size: clamp(18px, 2vw, 25px);
+    font-weight: 650;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+  }
+
+  .panel-detail {
+    max-width: 360px;
+    margin: 14px 0 0;
+    color: var(--panel-foreground);
+    opacity: .68;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .panel-cta,
+  .dialog-action {
+    width: fit-content;
+    min-height: 50px;
+    display: inline-flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0 20px;
+    color: white;
+    background: var(--panel-foreground);
+    border: 0;
+    border-radius: 999px;
+    box-shadow: 0 12px 22px rgb(20 30 28 / 14%);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 800;
+    transition: gap 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+  }
+
+  .panel-cta:hover,
+  .dialog-action:hover { gap: 24px; transform: translateY(-2px); box-shadow: 0 16px 26px rgb(20 30 28 / 18%); }
+  .panel-cta:focus-visible,
+  .dialog-action:focus-visible,
+  .dialog-close:focus-visible,
+  .landing-brand:focus-visible { outline: 3px solid rgb(226 61 53 / 52%); outline-offset: 4px; }
+
+  .panel-footer {
+    justify-content: flex-start;
+    gap: 8px;
+    color: var(--panel-foreground);
+    opacity: .58;
+    font-size: 11px;
+    font-weight: 750;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+
+  .landing-footer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    padding-top: 22px;
+    font-size: 10px;
+    letter-spacing: .08em;
+  }
+
+  .landing-footer-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--landing-red); }
+
+  .coming-soon-backdrop {
+    position: fixed;
+    z-index: 10;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgb(23 32 42 / 42%);
+    animation: fade-in 180ms ease both;
+  }
+
+  .coming-soon-dialog {
+    position: relative;
+    width: min(100%, 420px);
+    padding: 42px;
+    color: #123f45;
+    background: #f7fffd;
+    border: 1px solid rgb(18 63 69 / 14%);
+    border-radius: 22px;
+    box-shadow: 0 24px 70px rgb(23 32 42 / 24%);
+    animation: dialog-arrive 300ms cubic-bezier(.22, 1, .36, 1) both;
+  }
+
+  .dialog-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    color: #716657;
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+
+  .dialog-close:hover { background: #e0f1ee; }
+  .dialog-icon { width: 48px; height: 48px; display: grid; place-items: center; margin-bottom: 28px; color: #123f45; background: #b9e0da; border-radius: 14px; }
+  .dialog-eyebrow { margin-bottom: 10px; color: #21777b; }
+  .coming-soon-dialog h2 { margin: 0; color: #123f45; font-size: 30px; letter-spacing: -.04em; line-height: 1.05; }
+  .coming-soon-dialog p:not(.dialog-eyebrow) { margin: 16px 0 28px; color: #4e7778; font-size: 14px; line-height: 1.65; }
+  .dialog-action { color: #f7fffd; background: #123f45; }
+
+  @keyframes panel-arrive { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes dialog-arrive { from { opacity: 0; transform: translateY(12px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+  @media (max-width: 760px) {
+    .landing-shell { padding: 20px 14px 16px; overflow: auto; }
+    .landing-header { padding: 0 6px 22px; }
+    .landing-kicker { max-width: 160px; text-align: right; line-height: 1.4; }
+    .product-panels { min-height: 0; flex-direction: column; gap: 10px; margin: 0; }
+    .product-panel,
+    .product-panels.is-madrastak .product-panel-madrastak,
+    .product-panels.is-alamatak .product-panel-alamatak,
+    .product-panels.is-madrastak .product-panel-alamatak,
+    .product-panels.is-alamatak .product-panel-madrastak { flex: 1 1 auto; min-height: 390px; filter: none; }
+    .panel-content { padding: 28px 26px; }
+    .panel-copy { padding: 34px 0; }
+    .panel-copy h1 { font-size: clamp(48px, 16vw, 72px); }
+    .landing-footer { padding-top: 16px; font-size: 9px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .product-panel, .coming-soon-backdrop, .coming-soon-dialog { animation: none; transition: none; }
+    .panel-cta, .dialog-action { transition: none; }
+  }
+}

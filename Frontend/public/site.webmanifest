@@ -1,7 +1,7 @@
 {
-  "name": "Madrastak",
-  "short_name": "Madrastak",
-  "description": "Madrastak - Online interactive tutoring and lecture platform",
+  "name": "Manastak",
+  "short_name": "Manastak",
+  "description": "Manastak - the entry point for Madrastak learning products",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

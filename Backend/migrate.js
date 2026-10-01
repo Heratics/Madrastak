@@ -49,11 +49,26 @@ async function runMigrations() {
         email VARCHAR(255) NOT NULL UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
         role ENUM('student', 'teacher', 'admin') NOT NULL DEFAULT 'student',
+        account_status ENUM('active', 'pending', 'rejected', 'suspended') NOT NULL DEFAULT 'active',
         bio TEXT NULL,
         profile_pic VARCHAR(500) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+
+    // 1b. Add account status without changing existing users' access.
+    const hasAccountStatus = await columnExists('users', 'account_status');
+    if (!hasAccountStatus) {
+      console.log('Adding `account_status` column to users...');
+      await pool.query(`
+        ALTER TABLE users
+        ADD COLUMN account_status ENUM('active', 'pending', 'rejected', 'suspended')
+        NOT NULL DEFAULT 'active' AFTER role;
+      `);
+      console.log('✔ Added `account_status` column; existing users remain active.');
+    } else {
+      console.log('✔ `account_status` column already exists.');
+    }
 
     // 2. Ensure `live_classes` table exists
     console.log('Checking live_classes table...');
@@ -144,6 +159,32 @@ async function runMigrations() {
       await pool.query('ALTER TABLE live_classes ADD INDEX idx_classes_start_time (start_time);');
       console.log('✔ Added index `idx_classes_start_time`.');
     }
+
+    const hasAccountStatusIndex = await indexExists('users', 'idx_users_account_status');
+    if (!hasAccountStatusIndex) {
+      await pool.query('ALTER TABLE users ADD INDEX idx_users_account_status (account_status);');
+      console.log('✔ Added index `idx_users_account_status`.');
+    }
+
+    // 8. Keep approval changes auditable without exposing authentication data.
+    console.log('Checking admin_actions table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_actions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        admin_id INT NOT NULL,
+        target_user_id INT NOT NULL,
+        action ENUM('approve_teacher', 'reject_teacher') NOT NULL,
+        previous_status ENUM('active', 'pending', 'rejected', 'suspended') NOT NULL,
+        new_status ENUM('active', 'pending', 'rejected', 'suspended') NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE RESTRICT,
+        FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_admin_actions_admin (admin_id),
+        INDEX idx_admin_actions_target (target_user_id),
+        INDEX idx_admin_actions_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    console.log('✔ `admin_actions` table verified.');
 
     console.log('\n🎉 All migrations completed successfully! Database is up to date.');
   } catch (error) {

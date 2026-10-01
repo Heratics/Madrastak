@@ -128,7 +128,7 @@ function evaluateClassStatus(cls) {
 // ==========================================
 // Authentication Middleware
 // ==========================================
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
   let token = null;
   const authHeader = req.headers.authorization;
 
@@ -146,11 +146,63 @@ const verifyToken = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
+    const [users] = await db.query(
+      'SELECT id, role, account_status FROM users WHERE id = ?',
+      [decoded.id]
+    );
+
+    if (users.length === 0) {
+      return res.status(401).json({ message: 'Access Denied: Account not found' });
+    }
+
+    const currentUser = users[0];
+    if (currentUser.account_status === 'rejected' || currentUser.account_status === 'suspended') {
+      return res.status(403).json({ message: 'Account access is not active.' });
+    }
+
+    // Use current database state instead of trusting stale role claims in a JWT.
+    req.user = {
+      ...decoded,
+      id: currentUser.id,
+      role: currentUser.role,
+      account_status: currentUser.account_status
+    };
     next();
   } catch (error) {
     res.status(401).json({ message: 'Access Denied: Invalid token' });
   }
+};
+
+const requireAdmin = (req, res, next) => {
+  if (req.user.role !== 'admin' || req.user.account_status !== 'active') {
+    return res.status(403).json({ message: 'Administrator access required.' });
+  }
+  next();
+};
+
+const requireActiveTeacherOrAdmin = (req, res, next) => {
+  const isActiveAdmin = req.user.role === 'admin' && req.user.account_status === 'active';
+  const isActiveTeacher = req.user.role === 'teacher' && req.user.account_status === 'active';
+  if (!isActiveAdmin && !isActiveTeacher) {
+    return res.status(403).json({ message: 'An active teacher account is required.' });
+  }
+  next();
+};
+
+const requireActiveAccount = (req, res, next) => {
+  if (req.user.account_status !== 'active') {
+    return res.status(403).json({ message: 'Account approval is required for this action.' });
+  }
+  next();
+};
+
+const requireActiveStudentOrAdmin = (req, res, next) => {
+  const isActiveAdmin = req.user.role === 'admin' && req.user.account_status === 'active';
+  const isActiveStudent = req.user.role === 'student' && req.user.account_status === 'active';
+  if (!isActiveAdmin && !isActiveStudent) {
+    return res.status(403).json({ message: 'An active student account is required.' });
+  }
+  next();
 };
 
 // ==========================================
@@ -183,11 +235,13 @@ app.post('/api/register', async (req, res) => {
 
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
-    const userRole = role === 'teacher' || role === 'admin' ? role : 'student';
+    // Public registration can create students or pending teachers only.
+    const userRole = role === 'teacher' ? 'teacher' : 'student';
+    const accountStatus = userRole === 'teacher' ? 'pending' : 'active';
 
     const [result] = await db.query(
-      'INSERT INTO users (full_name, email, password_hash, role) VALUES (?, ?, ?, ?)',
-      [full_name, email, hashedPassword, userRole]
+      'INSERT INTO users (full_name, email, password_hash, role, account_status) VALUES (?, ?, ?, ?, ?)',
+      [full_name, email, hashedPassword, userRole, accountStatus]
     );
 
     res.status(201).json({ message: 'User registered successfully!', userId: result.insertId });
@@ -206,7 +260,10 @@ app.post('/api/login', async (req, res) => {
   }
 
   try {
-    const [users] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    const [users] = await db.query(
+      'SELECT id, full_name, email, password_hash, role, account_status FROM users WHERE email = ?',
+      [email]
+    );
     if (users.length === 0) {
       return res.status(401).json({ message: 'Invalid credentials.' });
     }
@@ -226,7 +283,13 @@ app.post('/api/login', async (req, res) => {
     res.json({
       message: 'Login successful!',
       token,
-      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role }
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        role: user.role,
+        account_status: user.account_status
+      }
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -235,12 +298,140 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ==========================================
+// Administrator Routes
+// ==========================================
+app.get('/api/admin/overview', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT
+        COUNT(*) AS total_users,
+        SUM(role = 'student') AS total_students,
+        SUM(role = 'teacher') AS total_teachers,
+        SUM(role = 'teacher' AND account_status = 'pending') AS pending_teachers,
+        SUM(role = 'admin') AS total_admins
+      FROM users
+    `);
+    const overview = rows[0] || {};
+    res.json({
+      total_users: Number(overview.total_users) || 0,
+      total_students: Number(overview.total_students) || 0,
+      total_teachers: Number(overview.total_teachers) || 0,
+      pending_teachers: Number(overview.pending_teachers) || 0,
+      total_admins: Number(overview.total_admins) || 0
+    });
+  } catch (error) {
+    console.error('Admin overview error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/admin/users', verifyToken, requireAdmin, async (req, res) => {
+  const { search = '', role, status } = req.query;
+  const conditions = [];
+  const values = [];
+
+  if (search.trim()) {
+    conditions.push('(full_name LIKE ? OR email LIKE ?)');
+    values.push(`%${search.trim()}%`, `%${search.trim()}%`);
+  }
+  if (['student', 'teacher', 'admin'].includes(role)) {
+    conditions.push('role = ?');
+    values.push(role);
+  }
+  if (['active', 'pending', 'rejected', 'suspended'].includes(status)) {
+    conditions.push('account_status = ?');
+    values.push(status);
+  }
+
+  try {
+    const [users] = await db.query(
+      `SELECT id, full_name, email, role, account_status, created_at
+       FROM users
+       ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+       ORDER BY created_at DESC`,
+      values
+    );
+    res.json(users);
+  } catch (error) {
+    console.error('Admin users error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/admin/pending-teachers', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [teachers] = await db.query(
+      `SELECT id, full_name, email, account_status, created_at
+       FROM users
+       WHERE role = 'teacher' AND account_status = 'pending'
+       ORDER BY created_at ASC`
+    );
+    res.json(teachers);
+  } catch (error) {
+    console.error('Pending teachers error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+async function decideTeacherStatus(req, res, nextStatus, action) {
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [teachers] = await connection.query(
+      `SELECT id, role, account_status
+       FROM users
+       WHERE id = ?
+       FOR UPDATE`,
+      [req.params.id]
+    );
+
+    if (teachers.length === 0 || teachers[0].role !== 'teacher') {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Teacher account not found.' });
+    }
+    if (teachers[0].account_status !== 'pending') {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Only pending teachers can be reviewed.' });
+    }
+
+    await connection.query(
+      'UPDATE users SET account_status = ? WHERE id = ?',
+      [nextStatus, req.params.id]
+    );
+    await connection.query(
+      `INSERT INTO admin_actions
+       (admin_id, target_user_id, action, previous_status, new_status)
+       VALUES (?, ?, ?, ?, ?)`,
+      [req.user.id, req.params.id, action, teachers[0].account_status, nextStatus]
+    );
+    await connection.commit();
+
+    console.info(`[Admin] ${action} admin=${req.user.id} teacher=${req.params.id}`);
+    res.json({ message: `Teacher ${nextStatus === 'active' ? 'approved' : 'rejected'} successfully.` });
+  } catch (error) {
+    await connection.rollback();
+    console.error(`Admin ${action} error:`, error);
+    next(error);
+  } finally {
+    connection.release();
+  }
+}
+
+app.post('/api/admin/teachers/:id/approve', verifyToken, requireAdmin, (req, res, next) => {
+  decideTeacherStatus(req, res, 'active', 'approve_teacher').catch(next);
+});
+
+app.post('/api/admin/teachers/:id/reject', verifyToken, requireAdmin, (req, res, next) => {
+  decideTeacherStatus(req, res, 'rejected', 'reject_teacher').catch(next);
+});
+
+// ==========================================
 // Live Class Management Routes
 // ==========================================
 
 // Create a Live Class (Teachers/Admins Only)
 // Resilient to whether migrations have been executed yet
-app.post('/api/classes', verifyToken, async (req, res) => {
+app.post('/api/classes', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Only teachers can schedule classes.' });
   }
@@ -365,7 +556,7 @@ app.get('/api/classes', async (req, res) => {
 });
 
 // Secure Class Access Gateway
-app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
+app.get('/api/classes/:id/access', verifyToken, requireActiveAccount, async (req, res) => {
   const classId = req.params.id;
 
   try {
@@ -394,7 +585,9 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
     const currentStatus = evaluateClassStatus(cls);
     cls.status = currentStatus;
 
-    const isTeacher = (Number(req.user.id) === Number(cls.teacher_id) || req.user.role === 'admin');
+    const isTeacher = req.user.account_status === 'active' && (
+      Number(req.user.id) === Number(cls.teacher_id) || req.user.role === 'admin'
+    );
 
     if (!isTeacher) {
       const [booking] = await db.query(
@@ -485,7 +678,7 @@ app.get('/api/classes/:id/access', verifyToken, async (req, res) => {
 });
 
 // Teacher: Explicitly Start Lecture
-app.post('/api/classes/:id/start', verifyToken, async (req, res) => {
+app.post('/api/classes/:id/start', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   const classId = req.params.id;
 
   try {
@@ -505,7 +698,7 @@ app.post('/api/classes/:id/start', verifyToken, async (req, res) => {
 });
 
 // Teacher: Explicitly End Lecture
-app.post('/api/classes/:id/end', verifyToken, async (req, res) => {
+app.post('/api/classes/:id/end', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   const classId = req.params.id;
 
   try {
@@ -535,7 +728,7 @@ app.post('/api/classes/:id/end', verifyToken, async (req, res) => {
 
 // Teacher: Get Classes Created by Current Teacher
 // Safe queries ensuring no failure if columns are absent
-app.get('/api/teacher/classes', verifyToken, async (req, res) => {
+app.get('/api/teacher/classes', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Access denied.' });
   }
@@ -579,7 +772,7 @@ app.get('/api/teacher/classes', verifyToken, async (req, res) => {
 });
 
 // Teacher: Delete Class
-app.delete('/api/classes/:id', verifyToken, async (req, res) => {
+app.delete('/api/classes/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Access denied.' });
   }
@@ -602,7 +795,7 @@ app.delete('/api/classes/:id', verifyToken, async (req, res) => {
 });
 
 // Teacher: Edit Existing Course
-app.put('/api/classes/:id', verifyToken, async (req, res) => {
+app.put('/api/classes/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Only teachers can edit classes.' });
   }
@@ -674,7 +867,7 @@ app.put('/api/classes/:id', verifyToken, async (req, res) => {
 });
 
 // Teacher: Relaunch Course (Relaunch Now OR Pick Date & Time)
-app.post('/api/classes/:id/relaunch', verifyToken, async (req, res) => {
+app.post('/api/classes/:id/relaunch', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Only teachers can relaunch classes.' });
   }
@@ -748,7 +941,7 @@ app.post('/api/classes/:id/relaunch', verifyToken, async (req, res) => {
 });
 
 // Teacher: Extend Active Live Class
-app.post('/api/classes/:id/extend', verifyToken, async (req, res) => {
+app.post('/api/classes/:id/extend', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Only instructors can extend live classes.' });
   }
@@ -805,7 +998,7 @@ app.post('/api/classes/:id/extend', verifyToken, async (req, res) => {
 // ==========================================
 
 // Student: Book a Class (Concurrency-Safe Transaction)
-app.post('/api/bookings', verifyToken, async (req, res) => {
+app.post('/api/bookings', verifyToken, requireActiveStudentOrAdmin, async (req, res) => {
   if (req.user.role !== 'student' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Only students can book classes.' });
   }
@@ -921,7 +1114,7 @@ app.delete('/api/bookings/:classId', verifyToken, async (req, res) => {
 });
 
 // Student: Get Booked Classes
-app.get('/api/student/bookings', verifyToken, async (req, res) => {
+app.get('/api/student/bookings', verifyToken, requireActiveStudentOrAdmin, async (req, res) => {
   if (req.user.role !== 'student' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Access denied.' });
   }
@@ -966,7 +1159,7 @@ app.get('/api/student/bookings', verifyToken, async (req, res) => {
 // ==========================================
 
 // Record Join Session
-app.post('/api/classes/:id/attendance/join', verifyToken, async (req, res) => {
+app.post('/api/classes/:id/attendance/join', verifyToken, requireActiveAccount, async (req, res) => {
   const classId = req.params.id;
   const userId = req.user.id;
 
@@ -974,7 +1167,9 @@ app.post('/api/classes/:id/attendance/join', verifyToken, async (req, res) => {
     const [classRows] = await db.query('SELECT teacher_id FROM live_classes WHERE id = ?', [classId]);
     if (classRows.length === 0) return res.status(404).json({ message: 'Class not found.' });
 
-    const isTeacher = (classRows[0].teacher_id === userId || req.user.role === 'admin');
+    const isTeacher = req.user.account_status === 'active' && (
+      Number(classRows[0].teacher_id) === Number(userId) || req.user.role === 'admin'
+    );
 
     if (!isTeacher) {
       const [booking] = await db.query(
@@ -1023,7 +1218,7 @@ app.post('/api/classes/:id/attendance/join', verifyToken, async (req, res) => {
 });
 
 // Record Leave Session
-app.post('/api/classes/:id/attendance/leave', verifyToken, async (req, res) => {
+app.post('/api/classes/:id/attendance/leave', verifyToken, requireActiveAccount, async (req, res) => {
   const classId = req.params.id;
   const userId = req.user.id;
   const { sessionId } = req.body || {};
@@ -1051,7 +1246,7 @@ app.post('/api/classes/:id/attendance/leave', verifyToken, async (req, res) => {
 });
 
 // Periodic Attendance Heartbeat (every 20s from Classroom UI)
-app.post('/api/classes/:id/attendance/heartbeat', verifyToken, async (req, res) => {
+app.post('/api/classes/:id/attendance/heartbeat', verifyToken, requireActiveAccount, async (req, res) => {
   const classId = req.params.id;
   const userId = req.user.id;
   const { sessionId } = req.body || {};
@@ -1097,7 +1292,7 @@ app.post('/api/classes/:id/attendance/heartbeat', verifyToken, async (req, res) 
 });
 
 // Teacher: View Class Attendance Roster
-app.get('/api/teacher/classes/:id/attendance', verifyToken, async (req, res) => {
+app.get('/api/teacher/classes/:id/attendance', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   const classId = req.params.id;
 
   try {
@@ -1237,7 +1432,7 @@ app.put('/api/user/password', verifyToken, async (req, res) => {
   }
 });
 
-app.put('/api/teacher/profile', verifyToken, async (req, res) => {
+app.put('/api/teacher/profile', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Access denied.' });
   }
@@ -1257,7 +1452,7 @@ app.put('/api/teacher/profile', verifyToken, async (req, res) => {
 
 app.get('/api/user/profile', verifyToken, async (req, res) => {
   try {
-    const [users] = await db.query('SELECT id, full_name, email, role, bio, profile_pic FROM users WHERE id = ?', [req.user.id]);
+    const [users] = await db.query('SELECT id, full_name, email, role, account_status, bio, profile_pic FROM users WHERE id = ?', [req.user.id]);
     if (users.length === 0) return res.status(404).json({ message: 'User not found' });
     res.json(users[0]);
   } catch (error) {

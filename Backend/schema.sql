@@ -9,11 +9,29 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   role ENUM('student', 'teacher', 'admin') NOT NULL DEFAULT 'student',
+  account_status ENUM('active', 'pending', 'rejected', 'suspended') NOT NULL DEFAULT 'active',
   bio TEXT NULL,
   profile_pic VARCHAR(500) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_users_role (role),
+  INDEX idx_users_account_status (account_status),
   INDEX idx_users_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 5. Administrative action history
+CREATE TABLE IF NOT EXISTS admin_actions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  admin_id INT NOT NULL,
+  target_user_id INT NOT NULL,
+  action ENUM('approve_teacher', 'reject_teacher') NOT NULL,
+  previous_status ENUM('active', 'pending', 'rejected', 'suspended') NOT NULL,
+  new_status ENUM('active', 'pending', 'rejected', 'suspended') NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_admin_actions_admin (admin_id),
+  INDEX idx_admin_actions_target (target_user_id),
+  INDEX idx_admin_actions_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. Live Classes Table

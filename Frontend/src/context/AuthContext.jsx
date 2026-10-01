@@ -49,7 +49,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
-    navigate('/dashboard');
+    navigate(userData.role === 'admin' ? '/home' : '/dashboard');
   }, [navigate]);
 
   // 2. Setup global fetch interceptor & startup / lifecycle expiration listeners

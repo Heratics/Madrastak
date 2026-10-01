@@ -31,8 +31,6 @@ export default function App() {
         element={
           !user ? (
             <Navigate to="/login" />
-          ) : user.role === 'admin' ? (
-            <Navigate to="/ahmadadminpage" />
           ) : user.role === 'teacher' && user.account_status && user.account_status !== 'active' ? (
             <AccountStatus status={user.account_status} />
           ) : user.role === 'teacher' ? (

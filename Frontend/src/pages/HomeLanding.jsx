@@ -1,7 +1,6 @@
-import { useContext, useState } from 'react';
+import { useState } from 'react';
 import { ArrowRight, BookOpen, GraduationCap, PenLine, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { AuthContext } from '../context/AuthContext';
 
 const PRODUCTS = {
   madrastak: {
@@ -25,13 +24,12 @@ const PRODUCTS = {
 };
 
 export default function HomeLanding() {
-  const { user } = useContext(AuthContext);
   const navigate = useNavigate();
   const [activeProduct, setActiveProduct] = useState(null);
   const [showComingSoon, setShowComingSoon] = useState(false);
 
   const enterMadrastak = () => {
-    navigate(user ? '/dashboard' : '/madrastak');
+    navigate('/home');
   };
 
   const openAlamatak = () => {

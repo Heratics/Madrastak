@@ -17,6 +17,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomeLanding />} />
+      <Route path="/home" element={<HomeCatalog />} />
       <Route path="/madrastak" element={<HomeCatalog />} />
       <Route path="/course/:id" element={<CourseDetail />} />
       <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />

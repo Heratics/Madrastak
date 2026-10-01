@@ -10,6 +10,7 @@ import CourseDetail from './pages/CourseDetail';
 import Classroom from './pages/Classroom';
 import AccountStatus from './pages/AccountStatus';
 import AdminDashboard from './pages/AdminDashboard';
+import ThreeAlamatakPage from './pages/ThreeAlamatakPage';
 
 export default function App() {
   const { user } = useContext(AuthContext);
@@ -22,6 +23,7 @@ export default function App() {
       <Route path="/course/:id" element={<CourseDetail />} />
       <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
       <Route path="/ahmadadminpage" element={<AdminDashboard />} />
+      <Route path="/3alamatak" element={<ThreeAlamatakPage />} />
       <Route 
         path="/classroom/:id" 
         element={!user ? <Navigate to="/login" /> : <Classroom />} 

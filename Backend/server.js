@@ -427,6 +427,651 @@ app.post('/api/admin/teachers/:id/reject', verifyToken, requireAdmin, (req, res,
 });
 
 // ==========================================
+// 3alamatak Gradebook Routes
+// ==========================================
+async function getAlamatakGradebook(req, gradebookId) {
+  const params = [gradebookId];
+  let ownership = '';
+  if (req.user.role !== 'admin') {
+    ownership = ' AND g.owner_user_id = ?';
+    params.push(req.user.id);
+  }
+
+  const [rows] = await db.query(
+    `SELECT g.id, g.owner_user_id, g.madrastak_class_id, g.title, g.subject,
+            g.academic_year, g.status, g.created_at, g.updated_at
+     FROM alamatak_gradebooks g
+     WHERE g.id = ?${ownership}`,
+    params
+  );
+  return rows[0] || null;
+}
+
+function validateGradebookPayload({ title, academic_year }) {
+  if (!title || typeof title !== 'string' || title.trim().length < 2 || title.trim().length > 255) {
+    return 'A gradebook title between 2 and 255 characters is required.';
+  }
+  if (!academic_year || typeof academic_year !== 'string' || academic_year.trim().length > 32) {
+    return 'An academic year is required.';
+  }
+  return null;
+}
+
+function validateStudentPayload({ display_name, first_name, last_name }) {
+  const displayName = String(display_name || `${first_name || ''} ${last_name || ''}`).trim();
+  if (!displayName || displayName.length > 255) return null;
+  return displayName;
+}
+
+async function validateLinkedStudent(linkedUserId) {
+  if (linkedUserId === undefined || linkedUserId === null || linkedUserId === '') return null;
+  const [rows] = await db.query(
+    `SELECT id FROM users
+     WHERE id = ? AND role = 'student' AND account_status = 'active'`,
+    [linkedUserId]
+  );
+  return rows.length ? Number(rows[0].id) : false;
+}
+
+app.get('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const params = [];
+    const ownership = req.user.role === 'admin' ? '' : 'WHERE g.owner_user_id = ?';
+    if (req.user.role !== 'admin') params.push(req.user.id);
+    const [gradebooks] = await db.query(
+      `SELECT g.id, g.owner_user_id, g.madrastak_class_id, g.title, g.subject,
+              g.academic_year, g.status, g.created_at, g.updated_at,
+              COUNT(DISTINCT s.id) AS student_count
+       FROM alamatak_gradebooks g
+       LEFT JOIN alamatak_students s ON s.gradebook_id = g.id AND s.status <> 'archived'
+       ${ownership}
+       GROUP BY g.id
+       ORDER BY g.updated_at DESC`,
+      params
+    );
+    res.json(gradebooks);
+  } catch (error) {
+    console.error('3alamatak gradebook list error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { title, subject = null, academic_year, madrastak_class_id = null } = req.body || {};
+  const validationError = validateGradebookPayload({ title, academic_year });
+  if (validationError) return res.status(400).json({ message: validationError });
+
+  try {
+    let classId = madrastak_class_id || null;
+    if (classId !== null) {
+      const [classes] = await db.query(
+        'SELECT id, teacher_id FROM live_classes WHERE id = ?',
+        [classId]
+      );
+      if (!classes.length) return res.status(400).json({ message: 'Linked Madrastak class was not found.' });
+      if (req.user.role !== 'admin' && Number(classes[0].teacher_id) !== Number(req.user.id)) {
+        return res.status(403).json({ message: 'You cannot link a gradebook to another teacher’s class.' });
+      }
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO alamatak_gradebooks
+       (owner_user_id, madrastak_class_id, title, subject, academic_year)
+       VALUES (?, ?, ?, ?, ?)`,
+      [req.user.id, classId, title.trim(), subject ? String(subject).trim() : null, academic_year.trim()]
+    );
+    const gradebook = await getAlamatakGradebook(req, result.insertId);
+    res.status(201).json(gradebook);
+  } catch (error) {
+    console.error('3alamatak gradebook create error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/3alamatak/gradebooks/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    res.json(gradebook);
+  } catch (error) {
+    console.error('3alamatak gradebook fetch error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.put('/api/3alamatak/gradebooks/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { title, subject = null, academic_year, status } = req.body || {};
+  const validationError = validateGradebookPayload({ title, academic_year });
+  if (validationError) return res.status(400).json({ message: validationError });
+  if (status !== undefined && !['active', 'archived'].includes(status)) {
+    return res.status(400).json({ message: 'Invalid gradebook status.' });
+  }
+
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    await db.query(
+      `UPDATE alamatak_gradebooks
+       SET title = ?, subject = ?, academic_year = ?, status = COALESCE(?, status)
+       WHERE id = ?`,
+      [title.trim(), subject ? String(subject).trim() : null, academic_year.trim(), status || null, gradebook.id]
+    );
+    res.json(await getAlamatakGradebook(req, gradebook.id));
+  } catch (error) {
+    console.error('3alamatak gradebook update error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.delete('/api/3alamatak/gradebooks/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    // Archive instead of deleting relational history and imported provenance.
+    await db.query("UPDATE alamatak_gradebooks SET status = 'archived' WHERE id = ?", [gradebook.id]);
+    res.json({ message: 'Gradebook archived.' });
+  } catch (error) {
+    console.error('3alamatak gradebook archive error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/students', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [students] = await db.query(
+      `SELECT id, gradebook_id, linked_user_id, external_student_id, first_name,
+              last_name, display_name, email, status, notes, created_at, updated_at
+       FROM alamatak_students
+       WHERE gradebook_id = ?
+       ORDER BY display_name ASC`,
+      [gradebook.id]
+    );
+    res.json(students);
+  } catch (error) {
+    console.error('3alamatak student list error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/students', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { first_name = '', last_name = '', display_name, email = null, external_student_id = null, linked_user_id = null, notes = null } = req.body || {};
+  const displayName = validateStudentPayload({ display_name, first_name, last_name });
+  if (!displayName) return res.status(400).json({ message: 'A valid student name is required.' });
+
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const linkedStudent = await validateLinkedStudent(linked_user_id);
+    if (linkedStudent === false) return res.status(400).json({ message: 'linked_user_id must reference an active student account.' });
+    const externalId = external_student_id ? String(external_student_id).trim() : null;
+    if (externalId) {
+      const [existing] = await db.query(
+        'SELECT id FROM alamatak_students WHERE gradebook_id = ? AND external_student_id = ?',
+        [gradebook.id, externalId]
+      );
+      if (existing.length) return res.status(409).json({ message: 'That external student ID already exists in this gradebook.' });
+    }
+    const [result] = await db.query(
+      `INSERT INTO alamatak_students
+       (gradebook_id, linked_user_id, external_student_id, first_name, last_name, display_name, email, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [gradebook.id, linkedStudent, externalId, String(first_name).trim(), String(last_name).trim(), displayName, email ? String(email).trim() : null, notes]
+    );
+    const [students] = await db.query('SELECT * FROM alamatak_students WHERE id = ?', [result.insertId]);
+    res.status(201).json(students[0]);
+  } catch (error) {
+    console.error('3alamatak student create error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.put('/api/3alamatak/gradebooks/:id/students/:studentId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { first_name = '', last_name = '', display_name, email = null, external_student_id = null, linked_user_id = null, status = 'active', notes = null } = req.body || {};
+  const displayName = validateStudentPayload({ display_name, first_name, last_name });
+  if (!displayName) return res.status(400).json({ message: 'A valid student name is required.' });
+  if (!['active', 'inactive', 'archived'].includes(status)) return res.status(400).json({ message: 'Invalid student status.' });
+
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const linkedStudent = await validateLinkedStudent(linked_user_id);
+    if (linkedStudent === false) return res.status(400).json({ message: 'linked_user_id must reference an active student account.' });
+    const externalId = external_student_id ? String(external_student_id).trim() : null;
+    const [result] = await db.query(
+      `UPDATE alamatak_students
+       SET linked_user_id = ?, external_student_id = ?, first_name = ?, last_name = ?,
+           display_name = ?, email = ?, status = ?, notes = ?
+       WHERE id = ? AND gradebook_id = ?`,
+      [linkedStudent, externalId, String(first_name).trim(), String(last_name).trim(), displayName, email ? String(email).trim() : null, status, notes, req.params.studentId, gradebook.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ message: 'Student not found.' });
+    const [students] = await db.query('SELECT * FROM alamatak_students WHERE id = ?', [req.params.studentId]);
+    res.json(students[0]);
+  } catch (error) {
+    console.error('3alamatak student update error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.delete('/api/3alamatak/gradebooks/:id/students/:studentId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [result] = await db.query(
+      "UPDATE alamatak_students SET status = 'archived' WHERE id = ? AND gradebook_id = ?",
+      [req.params.studentId, gradebook.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ message: 'Student not found.' });
+    res.json({ message: 'Student archived.' });
+  } catch (error) {
+    console.error('3alamatak student archive error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+async function getOwnedAssessment(req, assessmentId) {
+  const params = [assessmentId];
+  const ownership = req.user.role === 'admin' ? '' : ' AND g.owner_user_id = ?';
+  if (req.user.role !== 'admin') params.push(req.user.id);
+  const [rows] = await db.query(
+    `SELECT a.id, a.gradebook_id, a.title, a.strand, a.topic, a.assessment_date,
+            a.source_import_id, a.is_historical, a.source_year
+     FROM alamatak_assessments a
+     JOIN alamatak_gradebooks g ON g.id = a.gradebook_id
+     WHERE a.id = ?${ownership}`,
+    params
+  );
+  return rows[0] || null;
+}
+
+function normalizeAssessmentComponents(components) {
+  if (!Array.isArray(components) || components.length === 0) return null;
+  const normalized = components.map((component, index) => ({
+    name: String(component.name || '').trim(),
+    maximum_score: Number(component.maximum_score ?? component.max),
+    sort_order: Number.isInteger(component.sort_order) ? component.sort_order : index,
+  }));
+  if (normalized.some((component) => !component.name || !Number.isFinite(component.maximum_score) || component.maximum_score < 0)) return null;
+  return normalized;
+}
+
+app.get('/api/3alamatak/gradebooks/:id/assessments', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [assessments] = await db.query(
+      `SELECT id, gradebook_id, title, strand, topic, assessment_date,
+              source_import_id, is_historical, source_year
+       FROM alamatak_assessments
+       WHERE gradebook_id = ?
+       ORDER BY assessment_date IS NULL, assessment_date DESC, id DESC`,
+      [gradebook.id]
+    );
+    const [components] = await db.query(
+      `SELECT c.id, c.assessment_id, c.name, c.maximum_score, c.sort_order
+       FROM alamatak_assessment_components c
+       JOIN alamatak_assessments a ON a.id = c.assessment_id
+       WHERE a.gradebook_id = ?
+       ORDER BY c.assessment_id, c.sort_order, c.id`,
+      [gradebook.id]
+    );
+    res.json(assessments.map((assessment) => ({
+      ...assessment,
+      components: components.filter((component) => component.assessment_id === assessment.id),
+    })));
+  } catch (error) {
+    console.error('3alamatak assessment list error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/assessments', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { title, strand = null, topic = null, assessment_date = null, source_import_id = null, is_historical = false, source_year = null } = req.body || {};
+  const components = normalizeAssessmentComponents(req.body?.components);
+  if (!title || String(title).trim().length > 255 || !components) {
+    return res.status(400).json({ message: 'Assessment title and valid components are required.' });
+  }
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [assessmentResult] = await connection.query(
+        `INSERT INTO alamatak_assessments
+         (gradebook_id, title, strand, topic, assessment_date, source_import_id, is_historical, source_year)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [gradebook.id, String(title).trim(), strand, topic, assessment_date || null, source_import_id || null, Boolean(is_historical), source_year || null]
+      );
+      for (const component of components) {
+        await connection.query(
+          `INSERT INTO alamatak_assessment_components
+           (assessment_id, name, maximum_score, sort_order) VALUES (?, ?, ?, ?)`,
+          [assessmentResult.insertId, component.name, component.maximum_score, component.sort_order]
+        );
+      }
+      await connection.commit();
+      const [savedAssessment] = await db.query(
+        'SELECT id, gradebook_id, title, strand, topic, assessment_date, source_import_id, is_historical, source_year FROM alamatak_assessments WHERE id = ?',
+        [assessmentResult.insertId]
+      );
+      const [savedComponents] = await db.query(
+        'SELECT id, assessment_id, name, maximum_score, sort_order FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
+        [assessmentResult.insertId]
+      );
+      res.status(201).json({ ...savedAssessment[0], components: savedComponents });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('3alamatak assessment create error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.put('/api/3alamatak/assessments/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { title, strand = null, topic = null, assessment_date = null, source_import_id = null, is_historical = false, source_year = null } = req.body || {};
+  const components = normalizeAssessmentComponents(req.body?.components);
+  if (!title || String(title).trim().length > 255 || !components) {
+    return res.status(400).json({ message: 'Assessment title and valid components are required.' });
+  }
+  try {
+    const assessment = await getOwnedAssessment(req, req.params.id);
+    if (!assessment) return res.status(404).json({ message: 'Assessment not found.' });
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query(
+        `UPDATE alamatak_assessments
+         SET title = ?, strand = ?, topic = ?, assessment_date = ?, source_import_id = ?, is_historical = ?, source_year = ?
+         WHERE id = ?`,
+        [String(title).trim(), strand, topic, assessment_date || null, source_import_id || null, Boolean(is_historical), source_year || null, assessment.id]
+      );
+      await connection.query('DELETE FROM alamatak_assessment_components WHERE assessment_id = ?', [assessment.id]);
+      for (const component of components) {
+        await connection.query(
+          `INSERT INTO alamatak_assessment_components
+           (assessment_id, name, maximum_score, sort_order) VALUES (?, ?, ?, ?)`,
+          [assessment.id, component.name, component.maximum_score, component.sort_order]
+        );
+      }
+      await connection.commit();
+      res.json({ id: assessment.id, gradebook_id: assessment.gradebook_id, title: String(title).trim(), components });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('3alamatak assessment update error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.delete('/api/3alamatak/assessments/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const assessment = await getOwnedAssessment(req, req.params.id);
+    if (!assessment) return res.status(404).json({ message: 'Assessment not found.' });
+    await db.query('DELETE FROM alamatak_assessments WHERE id = ?', [assessment.id]);
+    res.json({ message: 'Assessment deleted.' });
+  } catch (error) {
+    console.error('3alamatak assessment delete error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const assessment = await getOwnedAssessment(req, req.params.id);
+    if (!assessment) return res.status(404).json({ message: 'Assessment not found.' });
+    const [marks] = await db.query(
+      `SELECT m.id, m.component_id, m.student_id, m.score, m.mark_status,
+              m.comment, m.follow_up_required
+       FROM alamatak_marks m
+       JOIN alamatak_assessment_components c ON c.id = m.component_id
+       WHERE c.assessment_id = ?`,
+      [assessment.id]
+    );
+    res.json(marks);
+  } catch (error) {
+    console.error('3alamatak marks list error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.put('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const entries = Array.isArray(req.body?.marks) ? req.body.marks : [];
+  if (!entries.length) return res.status(400).json({ message: 'At least one mark entry is required.' });
+  try {
+    const assessment = await getOwnedAssessment(req, req.params.id);
+    if (!assessment) return res.status(404).json({ message: 'Assessment not found.' });
+    const [components] = await db.query(
+      'SELECT id, maximum_score FROM alamatak_assessment_components WHERE assessment_id = ?',
+      [assessment.id]
+    );
+    const componentMap = new Map(components.map((component) => [Number(component.id), Number(component.maximum_score)]));
+    const studentIds = [...new Set(entries.map((entry) => Number(entry.student_id)).filter(Boolean))];
+    const [students] = await db.query(
+      `SELECT id FROM alamatak_students WHERE gradebook_id = ? AND id IN (?)`,
+      [assessment.gradebook_id, studentIds]
+    );
+    const studentSet = new Set(students.map((student) => Number(student.id)));
+    for (const entry of entries) {
+      const studentId = Number(entry.student_id);
+      const componentId = Number(entry.component_id);
+      if (!studentSet.has(studentId) || !componentMap.has(componentId)) return res.status(400).json({ message: 'Mark entry references an invalid student or component.' });
+      const score = entry.score === '' || entry.score === null || entry.score === undefined ? null : Number(entry.score);
+      if (score !== null && (!Number.isFinite(score) || score < 0 || score > componentMap.get(componentId))) {
+        return res.status(400).json({ message: 'A mark is outside its component maximum.' });
+      }
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      for (const entry of entries) {
+        const score = entry.score === '' || entry.score === null || entry.score === undefined ? null : Number(entry.score);
+        await connection.query(
+          `INSERT INTO alamatak_marks
+           (component_id, student_id, score, mark_status, comment, follow_up_required)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE score = VALUES(score), mark_status = VALUES(mark_status),
+             comment = VALUES(comment), follow_up_required = VALUES(follow_up_required)`,
+          [Number(entry.component_id), Number(entry.student_id), score, entry.mark_status || null, entry.comment || null, Boolean(entry.follow_up_required)]
+        );
+      }
+      await connection.commit();
+      res.json({ message: 'Marks saved.', saved: entries.length });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('3alamatak marks save error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/analytics', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [summary] = await db.query(
+      `SELECT
+         (SELECT COUNT(*) FROM alamatak_students WHERE gradebook_id = ? AND status <> 'archived') AS students,
+         (SELECT COUNT(*) FROM alamatak_assessments WHERE gradebook_id = ?) AS assessments,
+         (SELECT COUNT(*) FROM alamatak_marks m JOIN alamatak_assessment_components c ON c.id = m.component_id JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ?) AS recorded_marks`,
+      [gradebook.id, gradebook.id, gradebook.id]
+    );
+    const [averages] = await db.query(
+      `SELECT s.id AS student_id, s.display_name,
+              SUM(m.score) AS score, SUM(c.maximum_score) AS maximum_score
+       FROM alamatak_students s
+       LEFT JOIN alamatak_marks m ON m.student_id = s.id
+       LEFT JOIN alamatak_assessment_components c ON c.id = m.component_id
+       WHERE s.gradebook_id = ? AND s.status <> 'archived'
+       GROUP BY s.id, s.display_name
+       ORDER BY s.display_name`,
+      [gradebook.id]
+    );
+    const rows = averages.map((row) => ({
+      ...row,
+      percent: row.maximum_score > 0 ? Number(row.score || 0) / Number(row.maximum_score) * 100 : null,
+    }));
+    const populated = rows.filter((row) => row.percent !== null);
+    res.json({
+      summary: summary[0],
+      students: rows,
+      class_average: populated.length ? populated.reduce((sum, row) => sum + row.percent, 0) / populated.length : null,
+      highest: populated.length ? Math.max(...populated.map((row) => row.percent)) : null,
+      lowest: populated.length ? Math.min(...populated.map((row) => row.percent)) : null,
+    });
+  } catch (error) {
+    console.error('3alamatak analytics error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/export', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [students] = await db.query('SELECT * FROM alamatak_students WHERE gradebook_id = ? ORDER BY display_name', [gradebook.id]);
+    const [assessments] = await db.query('SELECT * FROM alamatak_assessments WHERE gradebook_id = ? ORDER BY id', [gradebook.id]);
+    const [components] = await db.query(
+      `SELECT c.* FROM alamatak_assessment_components c
+       JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ? ORDER BY c.assessment_id, c.sort_order`,
+      [gradebook.id]
+    );
+    const [marks] = await db.query(
+      `SELECT m.* FROM alamatak_marks m
+       JOIN alamatak_assessment_components c ON c.id = m.component_id
+       JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ?`,
+      [gradebook.id]
+    );
+    res.json({ version: 1, exported_at: new Date().toISOString(), gradebook, students, assessments, components, marks });
+  } catch (error) {
+    console.error('3alamatak export error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const payload = req.body || {};
+  if (!payload.original_filename || !Array.isArray(payload.sheets)) {
+    return res.status(400).json({ message: 'An import filename and worksheet package are required.' });
+  }
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [importResult] = await connection.query(
+        `INSERT INTO alamatak_imports
+         (gradebook_id, uploaded_by, original_filename, academic_year, detected_class, detected_subject, workbook_type, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [gradebook.id, req.user.id, String(payload.original_filename).slice(0, 512), payload.academic_year || null, payload.detected_class || null, payload.detected_subject || null, payload.workbook_type || null, JSON.stringify(payload.metadata || {})]
+      );
+      for (const sheet of payload.sheets) {
+        const rows = Array.isArray(sheet.rows) ? sheet.rows : [];
+        await connection.query(
+          `INSERT INTO alamatak_import_sheets
+           (import_id, sheet_name, visibility, classification, source_year, selected, row_count, column_count, raw_rows, diagnostics)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [importResult.insertId, String(sheet.name || 'Sheet').slice(0, 255), sheet.hidden ? 'hidden' : 'visible', sheet.type || 'reference', sheet.source_year || null, Boolean(sheet.selected), rows.length, Math.max(0, ...rows.map((row) => row.length)), JSON.stringify(rows), JSON.stringify(sheet.diagnostics || [])]
+        );
+      }
+
+      const studentMap = new Map();
+      for (const student of Array.isArray(payload.students) ? payload.students : []) {
+        const displayName = String(student.display_name || student.name || '').trim();
+        if (!displayName) continue;
+        const externalId = student.external_student_id ? String(student.external_student_id).trim() : null;
+        let existing = null;
+        if (externalId) {
+          const [rows] = await connection.query('SELECT id FROM alamatak_students WHERE gradebook_id = ? AND external_student_id = ?', [gradebook.id, externalId]);
+          existing = rows[0];
+        }
+        if (!existing) {
+          const [rows] = await connection.query('SELECT id FROM alamatak_students WHERE gradebook_id = ? AND display_name = ?', [gradebook.id, displayName]);
+          existing = rows[0];
+        }
+        if (existing) {
+          studentMap.set(student.key || externalId || displayName, existing.id);
+        } else {
+          const [result] = await connection.query(
+            `INSERT INTO alamatak_students
+             (gradebook_id, linked_user_id, external_student_id, first_name, last_name, display_name, email, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [gradebook.id, null, externalId, student.first_name || '', student.last_name || '', displayName, student.email || null, student.notes || null]
+          );
+          studentMap.set(student.key || externalId || displayName, result.insertId);
+        }
+      }
+
+      for (const assessment of Array.isArray(payload.assessments) ? payload.assessments : []) {
+        const components = normalizeAssessmentComponents(assessment.components);
+        if (!assessment.title || !components) continue;
+        const [assessmentResult] = await connection.query(
+          `INSERT INTO alamatak_assessments
+           (gradebook_id, title, strand, topic, assessment_date, source_import_id, is_historical, source_year)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [gradebook.id, assessment.title, assessment.strand || null, assessment.topic || null, assessment.assessment_date || null, importResult.insertId, Boolean(assessment.is_historical), assessment.source_year || null]
+        );
+        const componentIds = [];
+        for (const component of components) {
+          const [componentResult] = await connection.query(
+            `INSERT INTO alamatak_assessment_components
+             (assessment_id, name, maximum_score, sort_order) VALUES (?, ?, ?, ?)`,
+            [assessmentResult.insertId, component.name, component.maximum_score, component.sort_order]
+          );
+          componentIds.push(componentResult.insertId);
+        }
+        for (const mark of Array.isArray(assessment.marks) ? assessment.marks : []) {
+          const studentId = studentMap.get(mark.student_key || mark.external_student_id || mark.display_name);
+          const componentId = componentIds[Number(mark.component_index)];
+          if (!studentId || !componentId) continue;
+          await connection.query(
+            `INSERT INTO alamatak_marks
+             (component_id, student_id, score, mark_status, comment, follow_up_required)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE score = VALUES(score), mark_status = VALUES(mark_status), comment = VALUES(comment), follow_up_required = VALUES(follow_up_required)`,
+            [componentId, studentId, mark.score ?? null, mark.mark_status || null, mark.comment || null, Boolean(mark.follow_up_required)]
+          );
+        }
+      }
+
+      for (const record of Array.isArray(payload.historical_records) ? payload.historical_records : []) {
+        await connection.query(
+          `INSERT INTO alamatak_historical_records
+           (gradebook_id, import_id, record_type, source_year, payload)
+           VALUES (?, ?, ?, ?, ?)`,
+          [gradebook.id, importResult.insertId, record.record_type || 'imported', record.source_year || payload.academic_year || 'unknown', JSON.stringify(record.payload || record)]
+        );
+      }
+      await connection.commit();
+      res.status(201).json({ import_id: importResult.insertId, message: 'Import persisted.' });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('3alamatak import error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+// ==========================================
 // Live Class Management Routes
 // ==========================================
 

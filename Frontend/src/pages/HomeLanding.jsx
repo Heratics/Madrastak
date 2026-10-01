@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowRight, BookOpen, GraduationCap, PenLine, X } from 'lucide-react';
+import { ArrowRight, BookOpen, GraduationCap, PenLine } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const PRODUCTS = {
@@ -26,14 +26,13 @@ const PRODUCTS = {
 export default function HomeLanding() {
   const navigate = useNavigate();
   const [activeProduct, setActiveProduct] = useState(null);
-  const [showComingSoon, setShowComingSoon] = useState(false);
 
   const enterMadrastak = () => {
     navigate('/home');
   };
 
   const openAlamatak = () => {
-    setShowComingSoon(true);
+    navigate('/3alamatak');
   };
 
   return (
@@ -71,33 +70,6 @@ export default function HomeLanding() {
         <span>© 2026 Manastak</span>
       </footer>
 
-      {showComingSoon && (
-        <div className="coming-soon-backdrop" role="presentation" onMouseDown={() => setShowComingSoon(false)}>
-          <section
-            className="coming-soon-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="coming-soon-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="dialog-close"
-              aria-label="Close dialog"
-              onClick={() => setShowComingSoon(false)}
-            >
-              <X size={18} />
-            </button>
-            <div className="dialog-icon"><PenLine size={23} /></div>
-            <p className="dialog-eyebrow">Coming soon</p>
-            <h2 id="coming-soon-title">3alamatak is on its way.</h2>
-            <p>We are preparing the teacher markbook experience as part of the Manastak ecosystem.</p>
-            <button type="button" className="dialog-action" onClick={() => setShowComingSoon(false)}>
-              Back to products
-            </button>
-          </section>
-        </div>
-      )}
     </main>
   );
 }

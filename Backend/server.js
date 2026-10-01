@@ -1465,8 +1465,16 @@ app.get('/api/user/profile', verifyToken, async (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
+  const bootstrapConfigured = Boolean(
+    process.env.ADMIN_EMAIL?.trim() &&
+    process.env.ADMIN_PASSWORD &&
+    process.env.ADMIN_NAME?.trim()
+  );
+  console.log(`Admin bootstrap configuration: ${bootstrapConfigured ? 'present' : 'absent'}`);
+
   try {
-    await seedAdmin();
+    const result = await seedAdmin();
+    console.log(`Admin bootstrap result: ${result.created ? 'created' : result.reason}`);
   } catch (error) {
     // Bootstrap failures must not prevent normal API startup or expose credentials.
     console.error('Admin bootstrap unavailable:', error.message);

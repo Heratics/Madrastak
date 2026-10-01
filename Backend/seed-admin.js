@@ -3,10 +3,12 @@ const pool = require('./db');
 
 async function seedAdmin() {
   const { ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME } = process.env;
+  const adminEmail = ADMIN_EMAIL?.trim();
+  const adminName = ADMIN_NAME?.trim();
 
-  if (!ADMIN_EMAIL || !ADMIN_PASSWORD || !ADMIN_NAME) {
+  if (!adminEmail || !ADMIN_PASSWORD || !adminName) {
     console.log('Admin bootstrap skipped: required ADMIN_* variables are not configured.');
-    return { created: false, skipped: true };
+    return { created: false, skipped: true, reason: 'missing_configuration' };
   }
 
   if (ADMIN_PASSWORD.length < 12) {
@@ -27,12 +29,12 @@ async function seedAdmin() {
     if (admins.length > 0) {
       await connection.rollback();
       console.log('Admin bootstrap skipped: an administrator already exists.');
-      return { created: false, skipped: true };
+      return { created: false, skipped: true, reason: 'admin_exists' };
     }
 
     const [sameEmail] = await connection.query(
       'SELECT id, role FROM users WHERE email = ? FOR UPDATE',
-      [ADMIN_EMAIL]
+      [adminEmail]
     );
     if (sameEmail.length > 0) {
       throw new Error('ADMIN_EMAIL already belongs to a non-admin account.');
@@ -42,7 +44,7 @@ async function seedAdmin() {
     const [result] = await connection.query(
       `INSERT INTO users (full_name, email, password_hash, role, account_status)
        VALUES (?, ?, ?, 'admin', 'active')`,
-      [ADMIN_NAME, ADMIN_EMAIL, passwordHash]
+      [adminName, adminEmail, passwordHash]
     );
     await connection.query(
       `UPDATE admin_bootstrap
@@ -52,7 +54,7 @@ async function seedAdmin() {
     );
     await connection.commit();
     console.log('Admin account bootstrap completed.');
-    return { created: true, skipped: false };
+    return { created: true, skipped: false, reason: 'created' };
   } catch (error) {
     await connection.rollback();
     throw error;

@@ -426,6 +426,70 @@ app.post('/api/admin/teachers/:id/reject', verifyToken, requireAdmin, (req, res,
   decideTeacherStatus(req, res, 'rejected', 'reject_teacher').catch(next);
 });
 
+app.post('/api/admin/users/:id/reset-password', verifyToken, requireAdmin, async (req, res) => {
+  const targetUserId = parseInt(req.params.id, 10);
+  if (isNaN(targetUserId) || targetUserId <= 0) {
+    return res.status(400).json({ message: 'Invalid target user ID.' });
+  }
+
+  const { new_password } = req.body || {};
+  if (!new_password || typeof new_password !== 'string') {
+    return res.status(400).json({ message: 'New password is required.' });
+  }
+
+  if (new_password.length < 8) {
+    return res.status(400).json({ message: 'New password must be at least 8 characters long.' });
+  }
+
+  if (new_password.length > 128) {
+    return res.status(400).json({ message: 'New password must not exceed 128 characters.' });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [users] = await connection.query(
+      'SELECT id, full_name, email, role, account_status FROM users WHERE id = ? FOR UPDATE',
+      [targetUserId]
+    );
+
+    if (users.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const targetUser = users[0];
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+
+    await connection.query(
+      'UPDATE users SET password_hash = ? WHERE id = ?',
+      [hashedPassword, targetUserId]
+    );
+
+    await connection.query(
+      `INSERT INTO admin_actions
+       (admin_id, target_user_id, action, previous_status, new_status)
+       VALUES (?, ?, 'password_reset', ?, ?)`,
+      [req.user.id, targetUserId, targetUser.account_status, targetUser.account_status]
+    );
+
+    await connection.commit();
+
+    console.info(`[Admin] password_reset admin=${req.user.id} target_user=${targetUserId}`);
+    return res.json({
+      message: 'Password reset successfully. The user must now log in with the new password.'
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Admin password reset error:', error);
+    return res.status(500).json({ message: 'Internal server error.' });
+  } finally {
+    connection.release();
+  }
+});
+
 // ==========================================
 // 3alamatak Gradebook Routes
 // ==========================================
@@ -2130,4 +2194,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { app, startServer };

@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from 'react';
-import { Check, Filter, LogOut, RefreshCw, Search, ShieldCheck, Users, X } from 'lucide-react';
+import { Check, Eye, EyeOff, Filter, KeyRound, LogOut, RefreshCw, Search, ShieldCheck, Users, X } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { API_URL } from '../config';
@@ -24,6 +24,28 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState(null);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [targetUserForReset, setTargetUserForReset] = useState(null);
+
+  const handleResetPassword = async (targetUserId, newPassword) => {
+    const token = getValidToken();
+    if (!token) throw new Error('Authentication required. Please log in again.');
+
+    const response = await fetch(`${API_URL}/api/admin/users/${targetUserId}/reset-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ new_password: newPassword }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || 'Unable to reset user password.');
+    }
+    return data;
+  };
 
   const loadAdminData = async () => {
     const token = getValidToken();
@@ -117,6 +139,22 @@ export default function AdminDashboard() {
 
       <div className="mx-auto max-w-7xl space-y-8 px-6 py-8">
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
+        {successMessage && (
+          <div role="status" className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm">
+            <div className="flex items-center gap-2">
+              <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span>{successMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSuccessMessage('')}
+              className="rounded-lg p-1 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-900"
+              aria-label="Dismiss notification"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         <section aria-labelledby="overview-heading">
           <div className="mb-4 flex items-end justify-between gap-4">
@@ -193,16 +231,236 @@ export default function AdminDashboard() {
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-170 text-left text-sm">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-400"><tr><th className="px-6 py-3 font-bold">Name</th><th className="px-6 py-3 font-bold">Email</th><th className="px-6 py-3 font-bold">Role</th><th className="px-6 py-3 font-bold">Status</th><th className="px-6 py-3 font-bold">Created</th></tr></thead>
+              <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="px-6 py-3 font-bold">Name</th>
+                  <th className="px-6 py-3 font-bold">Email</th>
+                  <th className="px-6 py-3 font-bold">Role</th>
+                  <th className="px-6 py-3 font-bold">Status</th>
+                  <th className="px-6 py-3 font-bold">Created</th>
+                  <th className="px-6 py-3 font-bold text-right">Actions</th>
+                </tr>
+              </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredUsers.map((account) => <tr key={account.id} className="hover:bg-slate-50"><td className="px-6 py-4 font-bold text-slate-800">{account.full_name}</td><td className="px-6 py-4 text-slate-500">{account.email}</td><td className="px-6 py-4 capitalize text-slate-600">{account.role}</td><td className="px-6 py-4"><StatusBadge status={account.account_status} /></td><td className="px-6 py-4 text-slate-400">{formatDate(account.created_at)}</td></tr>)}
+                {filteredUsers.map((account) => (
+                  <tr key={account.id} className="hover:bg-slate-50">
+                    <td className="px-6 py-4 font-bold text-slate-800">{account.full_name}</td>
+                    <td className="px-6 py-4 text-slate-500">{account.email}</td>
+                    <td className="px-6 py-4 capitalize text-slate-600">{account.role}</td>
+                    <td className="px-6 py-4"><StatusBadge status={account.account_status} /></td>
+                    <td className="px-6 py-4 text-slate-400">{formatDate(account.created_at)}</td>
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('');
+                          setTargetUserForReset(account);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+                        title={`Reset password for ${account.full_name}`}
+                      >
+                        <KeyRound className="h-3.5 w-3.5" />
+                        <span>Reset Password</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             {filteredUsers.length === 0 && <p className="px-6 py-8 text-sm text-slate-400">No accounts match these filters.</p>}
           </div>
         </section>
       </div>
+
+      {targetUserForReset && (
+        <ResetPasswordModal
+          targetUser={targetUserForReset}
+          onClose={() => setTargetUserForReset(null)}
+          onSuccess={async (userId, newPwd) => {
+            await handleResetPassword(userId, newPwd);
+            setSuccessMessage(
+              `Password for ${targetUserForReset.full_name} (${targetUserForReset.email}) was reset successfully. The user must now log in with the new password.`
+            );
+          }}
+        />
+      )}
     </main>
+  );
+}
+
+function ResetPasswordModal({ targetUser, onClose, onSuccess }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [modalError, setModalError] = useState('');
+
+  if (!targetUser) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setModalError('');
+
+    if (!newPassword) {
+      setModalError('Please enter a new password.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setModalError('Password must be at least 8 characters long.');
+      return;
+    }
+    if (newPassword.length > 128) {
+      setModalError('Password must not exceed 128 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setModalError('Passwords do not match. Please verify your entries.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await onSuccess(targetUser.id, newPassword);
+      onClose();
+    } catch (err) {
+      setModalError(err.message || 'Failed to reset user password.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !submitting) onClose();
+      }}
+    >
+      <div
+        className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl transition-all"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reset-modal-title"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-red-600">
+              <KeyRound className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 id="reset-modal-title" className="text-lg font-black tracking-tight text-slate-900">
+                Reset Password
+              </h2>
+              <p className="text-xs text-slate-500">Assign a new password for this account</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
+            aria-label="Close modal"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6">
+          <div className="mb-5 rounded-xl border border-slate-100 bg-slate-50/70 p-3.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-slate-900">{targetUser.full_name}</p>
+                <p className="text-xs text-slate-500">{targetUser.email}</p>
+              </div>
+              <StatusBadge status={targetUser.account_status} />
+            </div>
+            <p className="mt-2 text-xs font-medium capitalize text-slate-500">
+              Role: <span className="font-semibold text-slate-700">{targetUser.role}</span>
+            </p>
+          </div>
+
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-xs leading-relaxed text-amber-900">
+            <p className="font-bold">Irreversible credential update</p>
+            <p className="mt-0.5 text-amber-800">
+              User passwords are cryptographically hashed and cannot be retrieved. Resetting will immediately update their credentials. The user must use this new password on their next login.
+            </p>
+          </div>
+
+          {modalError && (
+            <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">
+              {modalError}
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600" htmlFor="new-password-input">
+                New Password
+              </label>
+              <div className="relative mt-1.5">
+                <input
+                  id="new-password-input"
+                  type={showPassword ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Minimum 8 characters"
+                  disabled={submitting}
+                  autoComplete="new-password"
+                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 pr-10 text-sm outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-50 disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  tabIndex="-1"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-400">Must be at least 8 characters long.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600" htmlFor="confirm-password-input">
+                Confirm New Password
+              </label>
+              <div className="relative mt-1.5">
+                <input
+                  id="confirm-password-input"
+                  type={showPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter new password"
+                  disabled={submitting}
+                  autoComplete="new-password"
+                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 pr-10 text-sm outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-50 disabled:opacity-50"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-5">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-red-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-wait disabled:opacity-50"
+            >
+              {submitting ? 'Resetting...' : 'Reset Password'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 

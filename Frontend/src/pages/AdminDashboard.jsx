@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from 'react';
-import { Check, Eye, EyeOff, Filter, KeyRound, LogOut, RefreshCw, Search, ShieldCheck, Users, X } from 'lucide-react';
+import { AlertTriangle, Ban, Check, CheckCircle2, Eye, EyeOff, Filter, KeyRound, LogOut, RefreshCw, Search, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { API_URL } from '../config';
@@ -26,6 +26,7 @@ export default function AdminDashboard() {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [targetUserForReset, setTargetUserForReset] = useState(null);
+  const [targetUserForDelete, setTargetUserForDelete] = useState(null);
 
   const handleResetPassword = async (targetUserId, newPassword) => {
     const token = getValidToken();
@@ -44,6 +45,62 @@ export default function AdminDashboard() {
     if (!response.ok) {
       throw new Error(data.message || 'Unable to reset user password.');
     }
+    return data;
+  };
+
+  const handleSuspendUser = async (targetUserId) => {
+    const token = getValidToken();
+    if (!token) return;
+    setActionId(targetUserId);
+    setError('');
+    setSuccessMessage('');
+    try {
+      const response = await fetch(`${API_URL}/api/admin/users/${targetUserId}/suspend`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Unable to suspend user.');
+      setSuccessMessage(data.message || 'User account suspended.');
+      await loadAdminData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleReactivateUser = async (targetUserId) => {
+    const token = getValidToken();
+    if (!token) return;
+    setActionId(targetUserId);
+    setError('');
+    setSuccessMessage('');
+    try {
+      const response = await fetch(`${API_URL}/api/admin/users/${targetUserId}/reactivate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Unable to reactivate user.');
+      setSuccessMessage(data.message || 'User account reactivated.');
+      await loadAdminData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleDeleteUser = async (targetUserId) => {
+    const token = getValidToken();
+    if (!token) throw new Error('Authentication required.');
+    const response = await fetch(`${API_URL}/api/admin/users/${targetUserId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Unable to delete user.');
     return data;
   };
 
@@ -250,18 +307,59 @@ export default function AdminDashboard() {
                     <td className="px-6 py-4"><StatusBadge status={account.account_status} /></td>
                     <td className="px-6 py-4 text-slate-400">{formatDate(account.created_at)}</td>
                     <td className="px-6 py-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setError('');
-                          setTargetUserForReset(account);
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-                        title={`Reset password for ${account.full_name}`}
-                      >
-                        <KeyRound className="h-3.5 w-3.5" />
-                        <span>Reset Password</span>
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setError('');
+                            setTargetUserForReset(account);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+                          title={`Reset password for ${account.full_name}`}
+                        >
+                          <KeyRound className="h-3.5 w-3.5" />
+                          <span>Reset</span>
+                        </button>
+                        {account.id !== user.id && (
+                          <>
+                            {account.account_status === 'suspended' ? (
+                              <button
+                                type="button"
+                                disabled={actionId === account.id}
+                                onClick={() => handleReactivateUser(account.id)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50"
+                                title="Reactivate account"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                <span>Reactivate</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={actionId === account.id}
+                                onClick={() => handleSuspendUser(account.id)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-bold text-amber-700 shadow-sm transition hover:bg-amber-50 disabled:opacity-50"
+                                title="Suspend account"
+                              >
+                                <Ban className="h-3.5 w-3.5" />
+                                <span>Suspend</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setError('');
+                                setTargetUserForDelete(account);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-bold text-red-700 shadow-sm transition hover:bg-red-50"
+                              title="Delete account"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Delete</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -281,6 +379,19 @@ export default function AdminDashboard() {
             setSuccessMessage(
               `Password for ${targetUserForReset.full_name} (${targetUserForReset.email}) was reset successfully. The user must now log in with the new password.`
             );
+          }}
+        />
+      )}
+
+      {targetUserForDelete && (
+        <DeleteAccountModal
+          targetUser={targetUserForDelete}
+          onClose={() => setTargetUserForDelete(null)}
+          onConfirm={async (targetId) => {
+            const result = await handleDeleteUser(targetId);
+            setSuccessMessage(result.message || 'User account deleted successfully.');
+            setTargetUserForDelete(null);
+            await loadAdminData();
           }}
         />
       )}
@@ -459,6 +570,117 @@ function ResetPasswordModal({ targetUser, onClose, onSuccess }) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function DeleteAccountModal({ targetUser, onClose, onConfirm }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [modalError, setModalError] = useState('');
+
+  if (!targetUser) return null;
+
+  const handleDelete = async () => {
+    setModalError('');
+    setSubmitting(true);
+    try {
+      await onConfirm(targetUser.id);
+    } catch (err) {
+      setModalError(err.message || 'Failed to delete account.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !submitting) onClose();
+      }}
+    >
+      <div
+        className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl transition-all"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-modal-title"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-red-600">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 id="delete-modal-title" className="text-lg font-black tracking-tight text-slate-900">
+                Delete Account
+              </h2>
+              <p className="text-xs text-slate-500">Permanent account removal</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
+            aria-label="Close modal"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="p-6">
+          <div className="mb-5 rounded-xl border border-slate-100 bg-slate-50/70 p-3.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-slate-900">{targetUser.full_name}</p>
+                <p className="text-xs text-slate-500">{targetUser.email}</p>
+              </div>
+              <StatusBadge status={targetUser.account_status} />
+            </div>
+            <p className="mt-2 text-xs font-medium capitalize text-slate-500">
+              Role: <span className="font-semibold text-slate-700">{targetUser.role}</span>
+            </p>
+          </div>
+
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50/70 p-3.5 text-xs leading-relaxed text-red-900">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+              <div>
+                <p className="font-bold">Permanent Deletion Warning</p>
+                <p className="mt-1 text-red-800">
+                  This action cannot be undone. Users with active classes, 3alamatak gradebooks, bookings, or attendance history cannot be deleted and should be <strong>suspended</strong> instead to preserve educational history.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {modalError && (
+            <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">
+              {modalError}
+            </div>
+          )}
+
+          <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-5">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={submitting}
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-red-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-wait disabled:opacity-50"
+            >
+              {submitting ? 'Deleting...' : 'Permanently Delete'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

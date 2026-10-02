@@ -37,4 +37,11 @@ export const threeAlamatakApi = {
   getAnalytics: (id) => request(`/api/3alamatak/gradebooks/${id}/analytics`),
   exportGradebook: (id) => request(`/api/3alamatak/gradebooks/${id}/export`),
   importPackage: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/imports`, { method: 'POST', body: JSON.stringify(payload) }),
+  listSchemes: (id) => request(`/api/3alamatak/gradebooks/${id}/schemes`),
+  createScheme: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/schemes`, { method: 'POST', body: JSON.stringify(payload) }),
+  deleteScheme: (gradebookId, schemeId) => request(`/api/3alamatak/gradebooks/${gradebookId}/schemes/${schemeId}`, { method: 'DELETE' }),
+  listHistoricalRecords: (id, params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/api/3alamatak/gradebooks/${id}/historical-records${q ? `?${q}` : ''}`);
+  },
 };

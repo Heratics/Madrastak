@@ -79,3 +79,100 @@ export function findConfidentNameMatch(roster, name, externalId = '') {
   if (scored[1] && scored[0].score - scored[1].score < 0.07) return { item: null, score: scored[0].score, mode: 'ambiguous-fuzzy' };
   return { item: scored[0].item, score: scored[0].score, mode: 'fuzzy' };
 }
+
+export function matchImportedRoster(existingStudents = [], importedStudents = []) {
+  return importedStudents.map((imported) => {
+    const importedName = imported.display_name || imported.name || '';
+    const externalId = imported.external_student_id || '';
+
+    // ID match
+    if (externalId) {
+      const byId = existingStudents.find((s) => s.external_student_id && String(s.external_student_id) === String(externalId));
+      if (byId) {
+        return {
+          ...imported,
+          status: 'exact',
+          mode: 'id',
+          matchedStudent: byId,
+          score: 1,
+          candidates: [byId],
+          resolution: String(byId.id),
+          include: true,
+        };
+      }
+    }
+
+    // Exact name match
+    const norm = normalizeImportedName(importedName);
+    const exact = existingStudents.filter((s) => normalizeImportedName(s.display_name || s.name) === norm);
+    if (exact.length === 1) {
+      return {
+        ...imported,
+        status: 'exact',
+        mode: 'exact',
+        matchedStudent: exact[0],
+        score: 1,
+        candidates: exact,
+        resolution: String(exact[0].id),
+        include: true,
+      };
+    }
+    if (exact.length > 1) {
+      return {
+        ...imported,
+        status: 'ambiguous',
+        mode: 'ambiguous-exact',
+        matchedStudent: null,
+        score: 1,
+        candidates: exact,
+        resolution: '', // requires teacher selection
+        include: true,
+      };
+    }
+
+    // Fuzzy matching
+    const scored = existingStudents
+      .map((s) => ({ student: s, score: importedNameScore(s.display_name || s.name, importedName) }))
+      .sort((a, b) => b.score - a.score);
+
+    if (scored.length && scored[0].score >= 0.88 && (!scored[1] || scored[0].score - scored[1].score >= 0.07)) {
+      return {
+        ...imported,
+        status: 'fuzzy',
+        mode: 'fuzzy',
+        matchedStudent: scored[0].student,
+        score: scored[0].score,
+        candidates: [scored[0].student],
+        resolution: String(scored[0].student.id),
+        include: true,
+      };
+    }
+
+    const ambiguousCandidates = scored.filter((c) => c.score >= 0.70);
+    if (ambiguousCandidates.length >= 2 || (scored.length && scored[0].score >= 0.75)) {
+      return {
+        ...imported,
+        status: 'ambiguous',
+        mode: 'ambiguous-fuzzy',
+        matchedStudent: null,
+        score: scored[0]?.score || 0,
+        candidates: ambiguousCandidates.map((c) => c.student),
+        resolution: '', // requires teacher selection
+        include: true,
+      };
+    }
+
+    // Unmatched / New student
+    return {
+      ...imported,
+      status: 'unmatched',
+      mode: 'new',
+      matchedStudent: null,
+      score: 0,
+      candidates: [],
+      resolution: 'new',
+      include: true,
+    };
+  });
+}
+

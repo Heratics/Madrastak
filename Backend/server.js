@@ -490,6 +490,181 @@ app.post('/api/admin/users/:id/reset-password', verifyToken, requireAdmin, async
   }
 });
 
+app.post('/api/admin/users/:id/suspend', verifyToken, requireAdmin, async (req, res) => {
+  const targetUserId = parseInt(req.params.id, 10);
+  if (isNaN(targetUserId) || targetUserId <= 0) {
+    return res.status(400).json({ message: 'Invalid target user ID.' });
+  }
+  if (targetUserId === req.user.id) {
+    return res.status(400).json({ message: 'You cannot suspend your own administrative account.' });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [users] = await connection.query(
+      'SELECT id, full_name, email, role, account_status FROM users WHERE id = ? FOR UPDATE',
+      [targetUserId]
+    );
+
+    if (users.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const targetUser = users[0];
+    if (targetUser.account_status === 'suspended') {
+      await connection.rollback();
+      return res.status(400).json({ message: 'User account is already suspended.' });
+    }
+
+    await connection.query('UPDATE users SET account_status = ? WHERE id = ?', ['suspended', targetUserId]);
+    await connection.query(
+      `INSERT INTO admin_actions
+       (admin_id, target_user_id, action, previous_status, new_status)
+       VALUES (?, ?, 'suspend_user', ?, 'suspended')`,
+      [req.user.id, targetUserId, targetUser.account_status]
+    );
+    await connection.commit();
+
+    console.info(`[Admin] suspend_user admin=${req.user.id} target_user=${targetUserId}`);
+    return res.json({ message: 'User account suspended successfully.' });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Admin suspend user error:', error);
+    return res.status(500).json({ message: 'Internal server error.' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.post('/api/admin/users/:id/reactivate', verifyToken, requireAdmin, async (req, res) => {
+  const targetUserId = parseInt(req.params.id, 10);
+  if (isNaN(targetUserId) || targetUserId <= 0) {
+    return res.status(400).json({ message: 'Invalid target user ID.' });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [users] = await connection.query(
+      'SELECT id, full_name, email, role, account_status FROM users WHERE id = ? FOR UPDATE',
+      [targetUserId]
+    );
+
+    if (users.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const targetUser = users[0];
+    if (targetUser.account_status === 'active') {
+      await connection.rollback();
+      return res.status(400).json({ message: 'User account is already active.' });
+    }
+
+    await connection.query('UPDATE users SET account_status = ? WHERE id = ?', ['active', targetUserId]);
+    await connection.query(
+      `INSERT INTO admin_actions
+       (admin_id, target_user_id, action, previous_status, new_status)
+       VALUES (?, ?, 'reactivate_user', ?, 'active')`,
+      [req.user.id, targetUserId, targetUser.account_status]
+    );
+    await connection.commit();
+
+    console.info(`[Admin] reactivate_user admin=${req.user.id} target_user=${targetUserId}`);
+    return res.json({ message: 'User account reactivated successfully.' });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Admin reactivate user error:', error);
+    return res.status(500).json({ message: 'Internal server error.' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.delete('/api/admin/users/:id', verifyToken, requireAdmin, async (req, res) => {
+  const targetUserId = parseInt(req.params.id, 10);
+  if (isNaN(targetUserId) || targetUserId <= 0) {
+    return res.status(400).json({ message: 'Invalid target user ID.' });
+  }
+  if (targetUserId === req.user.id) {
+    return res.status(400).json({ message: 'You cannot delete your own administrative account.' });
+  }
+
+  try {
+    // Check foreign keys and dependent records before deletion to prevent data corruption
+    const [
+      [classes],
+      [bookings],
+      [gradebooks],
+      [imports],
+      [attendance],
+      [adminActions]
+    ] = await Promise.all([
+      db.query('SELECT COUNT(*) AS count FROM live_classes WHERE teacher_id = ?', [targetUserId]),
+      db.query('SELECT COUNT(*) AS count FROM class_bookings WHERE student_id = ?', [targetUserId]),
+      db.query('SELECT COUNT(*) AS count FROM alamatak_gradebooks WHERE owner_user_id = ?', [targetUserId]),
+      db.query('SELECT COUNT(*) AS count FROM alamatak_imports WHERE uploaded_by = ?', [targetUserId]),
+      db.query('SELECT COUNT(*) AS count FROM class_attendance WHERE user_id = ?', [targetUserId]),
+      db.query('SELECT COUNT(*) AS count FROM admin_actions WHERE admin_id = ?', [targetUserId]),
+    ]);
+
+    const conflicts = [];
+    if (classes[0].count > 0) conflicts.push(`${classes[0].count} live class(es)`);
+    if (bookings[0].count > 0) conflicts.push(`${bookings[0].count} class booking(s)`);
+    if (gradebooks[0].count > 0) conflicts.push(`${gradebooks[0].count} 3alamatak gradebook(s)`);
+    if (imports[0].count > 0) conflicts.push(`${imports[0].count} gradebook import(s)`);
+    if (attendance[0].count > 0) conflicts.push(`${attendance[0].count} attendance record(s)`);
+    if (adminActions[0].count > 0) conflicts.push(`${adminActions[0].count} admin action log(s)`);
+
+    if (conflicts.length > 0) {
+      return res.status(409).json({
+        message: `Cannot delete account because it is referenced by existing records (${conflicts.join(', ')}). Consider suspending the account instead to preserve educational history.`
+      });
+    }
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [users] = await connection.query(
+        'SELECT id, full_name, email, role, account_status FROM users WHERE id = ? FOR UPDATE',
+        [targetUserId]
+      );
+
+      if (users.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'User not found.' });
+      }
+
+      const targetUser = users[0];
+
+      // Audit log the deletion before removing user record (target_user_id is set to null on cascade)
+      await connection.query(
+        `INSERT INTO admin_actions
+         (admin_id, target_user_id, action, previous_status, new_status)
+         VALUES (?, ?, 'delete_account', ?, 'deleted')`,
+        [req.user.id, targetUserId, targetUser.account_status]
+      );
+
+      await connection.query('DELETE FROM users WHERE id = ?', [targetUserId]);
+      await connection.commit();
+
+      console.info(`[Admin] delete_account admin=${req.user.id} target_user=${targetUserId} email=${targetUser.email}`);
+      return res.json({ message: 'User account deleted successfully.' });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('Admin delete user error:', error);
+    return res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+
 // ==========================================
 // 3alamatak Gradebook Routes
 // ==========================================
@@ -1020,9 +1195,177 @@ app.get('/api/3alamatak/gradebooks/:id/export', verifyToken, requireActiveTeache
        JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ?`,
       [gradebook.id]
     );
-    res.json({ version: 1, exported_at: new Date().toISOString(), gradebook, students, assessments, components, marks });
+    const [schemes] = await db.query('SELECT * FROM alamatak_grading_schemes WHERE gradebook_id = ?', [gradebook.id]);
+    const schemeIds = schemes.map((s) => s.id);
+    let schemeComponents = [];
+    let thresholds = [];
+    if (schemeIds.length) {
+      [schemeComponents] = await db.query('SELECT * FROM alamatak_grading_components WHERE scheme_id IN (?)', [schemeIds]);
+      const compIds = schemeComponents.map((c) => c.id);
+      if (compIds.length) {
+        [thresholds] = await db.query('SELECT * FROM alamatak_grade_thresholds WHERE grading_component_id IN (?)', [compIds]);
+      }
+    }
+    const [historicalRecords] = await db.query('SELECT * FROM alamatak_historical_records WHERE gradebook_id = ?', [gradebook.id]);
+    res.json({
+      version: 1,
+      exported_at: new Date().toISOString(),
+      gradebook,
+      students,
+      assessments,
+      components,
+      marks,
+      schemes,
+      scheme_components: schemeComponents,
+      thresholds,
+      historical_records: historicalRecords
+    });
   } catch (error) {
     console.error('3alamatak export error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/schemes', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [schemes] = await db.query(
+      'SELECT id, gradebook_id, name, source_import_id, is_fallback, created_at, updated_at FROM alamatak_grading_schemes WHERE gradebook_id = ? ORDER BY is_fallback DESC, id ASC',
+      [gradebook.id]
+    );
+    if (!schemes.length) return res.json([]);
+    const schemeIds = schemes.map((s) => s.id);
+    const [components] = await db.query(
+      'SELECT id, scheme_id, component_key, label, maximum_score FROM alamatak_grading_components WHERE scheme_id IN (?) ORDER BY id ASC',
+      [schemeIds]
+    );
+    const componentIds = components.map((c) => c.id);
+    let thresholds = [];
+    if (componentIds.length) {
+      [thresholds] = await db.query(
+        'SELECT id, grading_component_id, grade_label, minimum_score FROM alamatak_grade_thresholds WHERE grading_component_id IN (?) ORDER BY minimum_score DESC',
+        [componentIds]
+      );
+    }
+    const thresholdMap = new Map();
+    for (const t of thresholds) {
+      if (!thresholdMap.has(t.grading_component_id)) thresholdMap.set(t.grading_component_id, {});
+      thresholdMap.get(t.grading_component_id)[t.grade_label] = Number(t.minimum_score);
+    }
+    const compMap = new Map();
+    for (const c of components) {
+      if (!compMap.has(c.scheme_id)) compMap.set(c.scheme_id, {});
+      compMap.get(c.scheme_id)[c.component_key] = {
+        id: c.id,
+        label: c.label,
+        maximum_score: c.maximum_score != null ? Number(c.maximum_score) : null,
+        thresholds: thresholdMap.get(c.id) || {},
+      };
+    }
+    const result = schemes.map((s) => ({
+      ...s,
+      components: compMap.get(s.id) || {},
+    }));
+    res.json(result);
+  } catch (error) {
+    console.error('3alamatak schemes list error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/schemes', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { name, is_fallback, components } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ message: 'A scheme name is required.' });
+  }
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [schemeRes] = await connection.query(
+        `INSERT INTO alamatak_grading_schemes (gradebook_id, name, is_fallback)
+         VALUES (?, ?, ?)`,
+        [gradebook.id, name.trim(), Boolean(is_fallback)]
+      );
+      const schemeId = schemeRes.insertId;
+
+      if (components && typeof components === 'object') {
+        for (const [key, comp] of Object.entries(components)) {
+          const [compRes] = await connection.query(
+            `INSERT INTO alamatak_grading_components (scheme_id, component_key, label, maximum_score)
+             VALUES (?, ?, ?, ?)`,
+            [schemeId, key, comp.label || key, comp.maximum_score != null ? Number(comp.maximum_score) : null]
+          );
+          const compId = compRes.insertId;
+          const thresholds = comp.thresholds || {};
+          for (const [gradeLabel, minScore] of Object.entries(thresholds)) {
+            if (minScore !== null && minScore !== undefined && !isNaN(Number(minScore))) {
+              await connection.query(
+                `INSERT INTO alamatak_grade_thresholds (grading_component_id, grade_label, minimum_score)
+                 VALUES (?, ?, ?)`,
+                [compId, gradeLabel, Number(minScore)]
+              );
+            }
+          }
+        }
+      }
+      await connection.commit();
+      res.status(201).json({ id: schemeId, message: 'Grading scheme created.' });
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('3alamatak scheme create error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.delete('/api/3alamatak/gradebooks/:id/schemes/:schemeId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    await db.query('DELETE FROM alamatak_grading_schemes WHERE id = ? AND gradebook_id = ?', [req.params.schemeId, gradebook.id]);
+    res.json({ message: 'Grading scheme deleted.' });
+  } catch (error) {
+    console.error('3alamatak scheme delete error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/historical-records', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const { record_type, source_year } = req.query;
+    const conditions = ['h.gradebook_id = ?'];
+    const params = [gradebook.id];
+    if (record_type) {
+      conditions.push('h.record_type = ?');
+      params.push(record_type);
+    }
+    if (source_year) {
+      conditions.push('h.source_year = ?');
+      params.push(source_year);
+    }
+    const [records] = await db.query(
+      `SELECT h.id, h.gradebook_id, h.student_id, h.import_id, h.record_type, h.source_year, h.payload, h.created_at,
+              s.display_name AS student_name, s.external_student_id
+       FROM alamatak_historical_records h
+       LEFT JOIN alamatak_students s ON s.id = h.student_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY h.created_at DESC`,
+      params
+    );
+    res.json(records);
+  } catch (error) {
+    console.error('3alamatak historical records error:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
@@ -1113,12 +1456,44 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
         }
       }
 
+      for (const scheme of Array.isArray(payload.schemes) ? payload.schemes : []) {
+        if (!scheme.name) continue;
+        const [schemeResult] = await connection.query(
+          `INSERT INTO alamatak_grading_schemes
+           (gradebook_id, name, source_import_id, is_fallback)
+           VALUES (?, ?, ?, ?)`,
+          [gradebook.id, scheme.name, importResult.insertId, Boolean(scheme.is_fallback)]
+        );
+        const schemeId = schemeResult.insertId;
+        for (const [key, comp] of Object.entries(scheme.components || {})) {
+          const [compResult] = await connection.query(
+            `INSERT INTO alamatak_grading_components
+             (scheme_id, component_key, label, maximum_score)
+             VALUES (?, ?, ?, ?)`,
+            [schemeId, key, comp.label || key, comp.maximum_score != null ? Number(comp.maximum_score) : null]
+          );
+          const compId = compResult.insertId;
+          const thresholds = comp.thresholds || {};
+          for (const [gradeLabel, minScore] of Object.entries(thresholds)) {
+            if (minScore !== null && minScore !== undefined && !isNaN(Number(minScore))) {
+              await connection.query(
+                `INSERT INTO alamatak_grade_thresholds
+                 (grading_component_id, grade_label, minimum_score)
+                 VALUES (?, ?, ?)`,
+                [compId, gradeLabel, Number(minScore)]
+              );
+            }
+          }
+        }
+      }
+
       for (const record of Array.isArray(payload.historical_records) ? payload.historical_records : []) {
+        const studentId = record.student_key ? studentMap.get(record.student_key) : null;
         await connection.query(
           `INSERT INTO alamatak_historical_records
-           (gradebook_id, import_id, record_type, source_year, payload)
-           VALUES (?, ?, ?, ?, ?)`,
-          [gradebook.id, importResult.insertId, record.record_type || 'imported', record.source_year || payload.academic_year || 'unknown', JSON.stringify(record.payload || record)]
+           (gradebook_id, student_id, import_id, record_type, source_year, payload)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [gradebook.id, studentId || null, importResult.insertId, record.record_type || 'imported', record.source_year || payload.academic_year || 'unknown', JSON.stringify(record.payload || record)]
         );
       }
       await connection.commit();

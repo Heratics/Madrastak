@@ -172,13 +172,13 @@ async function runMigrations() {
       CREATE TABLE IF NOT EXISTS admin_actions (
         id INT AUTO_INCREMENT PRIMARY KEY,
         admin_id INT NOT NULL,
-        target_user_id INT NOT NULL,
+        target_user_id INT NULL,
         action VARCHAR(50) NOT NULL,
         previous_status VARCHAR(50) NULL,
         new_status VARCHAR(50) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE RESTRICT,
-        FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE SET NULL,
         INDEX idx_admin_actions_admin (admin_id),
         INDEX idx_admin_actions_target (target_user_id),
         INDEX idx_admin_actions_created (created_at)

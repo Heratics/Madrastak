@@ -3,8 +3,9 @@ import { getValidToken } from '../../../utils/auth';
 
 async function request(path, options = {}) {
   const token = getValidToken();
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = {
-    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(!isFormData && options.body ? { 'Content-Type': 'application/json' } : {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
@@ -36,7 +37,18 @@ export const threeAlamatakApi = {
   saveMarks: (id, marks) => request(`/api/3alamatak/assessments/${id}/marks`, { method: 'PUT', body: JSON.stringify({ marks }) }),
   getAnalytics: (id) => request(`/api/3alamatak/gradebooks/${id}/analytics`),
   exportGradebook: (id) => request(`/api/3alamatak/gradebooks/${id}/export`),
-  importPackage: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/imports`, { method: 'POST', body: JSON.stringify(payload) }),
+  analyzeWorkbook: (id, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request(`/api/3alamatak/gradebooks/${id}/imports/analyze`, { method: 'POST', body: formData });
+  },
+  importPackage: (id, payload) => {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+    return request(`/api/3alamatak/gradebooks/${id}/imports`, {
+      method: 'POST',
+      body: isFormData ? payload : JSON.stringify(payload),
+    });
+  },
   listSchemes: (id) => request(`/api/3alamatak/gradebooks/${id}/schemes`),
   createScheme: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/schemes`, { method: 'POST', body: JSON.stringify(payload) }),
   deleteScheme: (gradebookId, schemeId) => request(`/api/3alamatak/gradebooks/${gradebookId}/schemes/${schemeId}`, { method: 'DELETE' }),

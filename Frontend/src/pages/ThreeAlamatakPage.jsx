@@ -286,14 +286,27 @@ export default function ThreeAlamatakPage() {
   const analyzeWorkbook = async (file) => {
     if (!file) return;
     try {
-      const sheets = /\.xlsx?$/i.test(file.name)
-        ? await readXlsxWorkbook(file)
-        : [{ name: file.name.replace(/\.[^.]+$/, ''), rows: parseDelimited(await file.text()) }];
-      
-      const pkg = buildWorkbookImportPackage(sheets, file.name, {
-        existingStudents: students,
-        academicYear: gradebook?.academic_year,
-      });
+      let pkg, sheets;
+      if (selectedId) {
+        try {
+          const res = await threeAlamatakApi.analyzeWorkbook(selectedId, file);
+          pkg = res.pkg;
+          sheets = res.sheets;
+        } catch (backendErr) {
+          console.warn('Backend analyze failed, falling back to local analysis:', backendErr);
+        }
+      }
+
+      if (!pkg) {
+        sheets = /\.xlsx?$/i.test(file.name)
+          ? await readXlsxWorkbook(file)
+          : [{ name: file.name.replace(/\.[^.]+$/, ''), rows: parseDelimited(await file.text()) }];
+        
+        pkg = buildWorkbookImportPackage(sheets, file.name, {
+          existingStudents: students,
+          academicYear: gradebook?.academic_year,
+        });
+      }
 
       const initialResolutions = {};
       (pkg.matched_students || []).forEach((m) => {
@@ -324,47 +337,61 @@ export default function ThreeAlamatakPage() {
     }
 
     await runAction(async () => {
-      // Re-map students according to teacher's resolutions
-      const finalStudents = [];
-      const studentKeyToTargetMap = new Map();
-
-      (importPreview.pkg.matched_students || []).forEach((m) => {
-        const res = studentResolutions[m.key] || { resolution: m.resolution, include: true };
-        if (!res.include || res.resolution === 'skip') return;
-
-        if (res.resolution === 'new') {
-          finalStudents.push({
-            key: m.key,
-            display_name: m.display_name,
-            first_name: m.first_name,
-            last_name: m.last_name,
-            external_student_id: m.external_student_id,
-            email: m.email,
-          });
-          studentKeyToTargetMap.set(m.key, m.key);
-        } else {
-          // Resolved to existing student
-          studentKeyToTargetMap.set(m.key, res.resolution);
+      if (importPreview.file && typeof File !== 'undefined' && importPreview.file instanceof File) {
+        const formData = new FormData();
+        formData.append('file', importPreview.file);
+        formData.append('sheetSelections', JSON.stringify(
+          (importPreview.pkg.sheets || []).map((s) => ({ name: s.name, selected: Boolean(s.selected) }))
+        ));
+        formData.append('studentResolutions', JSON.stringify(studentResolutions));
+        if (gradebook?.academic_year) {
+          formData.append('academicYear', gradebook.academic_year);
         }
-      });
+        await threeAlamatakApi.importPackage(selectedId, formData);
+      } else {
+        // Re-map students according to teacher's resolutions for non-file/backup packages
+        const finalStudents = [];
+        const studentKeyToTargetMap = new Map();
 
-      const payload = {
-        ...importPreview.pkg,
-        students: finalStudents,
-        assessments: (importPreview.pkg.assessments || []).map((ass) => ({
-          ...ass,
-          marks: (ass.marks || []).map((mk) => ({
-            ...mk,
-            student_key: studentKeyToTargetMap.get(mk.student_key) || mk.student_key,
+        (importPreview.pkg.matched_students || []).forEach((m) => {
+          const res = studentResolutions[m.key] || { resolution: m.resolution, include: true };
+          if (!res.include || res.resolution === 'skip') return;
+
+          if (res.resolution === 'new') {
+            finalStudents.push({
+              key: m.key,
+              display_name: m.display_name,
+              first_name: m.first_name,
+              last_name: m.last_name,
+              external_student_id: m.external_student_id,
+              email: m.email,
+            });
+            studentKeyToTargetMap.set(m.key, m.key);
+          } else {
+            // Resolved to existing student
+            studentKeyToTargetMap.set(m.key, res.resolution);
+          }
+        });
+
+        const payload = {
+          ...importPreview.pkg,
+          students: finalStudents,
+          assessments: (importPreview.pkg.assessments || []).map((ass) => ({
+            ...ass,
+            marks: (ass.marks || []).map((mk) => ({
+              ...mk,
+              student_key: studentKeyToTargetMap.get(mk.student_key) || mk.student_key,
+            })),
           })),
-        })),
-        historical_records: (importPreview.pkg.historical_records || []).map((rec) => ({
-          ...rec,
-          student_key: studentKeyToTargetMap.get(rec.student_key) || rec.student_key,
-        })),
-      };
+          historical_records: (importPreview.pkg.historical_records || []).map((rec) => ({
+            ...rec,
+            student_key: studentKeyToTargetMap.get(rec.student_key) || rec.student_key,
+          })),
+        };
 
-      await threeAlamatakApi.importPackage(selectedId, payload);
+        await threeAlamatakApi.importPackage(selectedId, payload);
+      }
+
       setImportPreview(null);
       await loadWorkspace();
     }, 'Workbook import persisted.');

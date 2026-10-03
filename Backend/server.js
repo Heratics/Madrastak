@@ -3,15 +3,70 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const multer = require('multer');
 require('dotenv').config();
 const db = require('./db');
 const { generateJaasToken } = require('./jaas');
 const { seedAdmin } = require('./seed-admin');
+const workbookParser = require('./workbookParser');
 
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
+// Global error handler for body-parser entity too large and syntax errors
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    return res.status(413).json({ message: 'Payload Too Large: Request body exceeds the 20 MB limit.' });
+  }
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({ message: 'Invalid JSON payload.' });
+  }
+  next(err);
+});
+
+// Multer memory storage configuration for 3alamatak Excel/delimited imports
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 20 * 1024 * 1024, // 20 MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowed = /\.(xlsx|xls|csv|tsv|txt)$/i.test(file.originalname);
+    if (!allowed) {
+      const error = new Error('Invalid file format. Please upload an Excel (.xlsx, .xls) or delimited text (.csv, .tsv, .txt) file.');
+      error.status = 400;
+      return cb(error);
+    }
+    cb(null, true);
+  },
+});
+
+function handleUpload(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ message: 'Payload Too Large: File exceeds the 20 MB limit.' });
+      }
+      return res.status(400).json({ message: `Upload error: ${err.message}` });
+    } else if (err) {
+      const status = err.status || 400;
+      return res.status(status).json({ message: err.message || 'File upload failed.' });
+    }
+    next();
+  });
+}
+
+function handleOptionalUpload(req, res, next) {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    return handleUpload(req, res, next);
+  }
+  next();
+}
+
 
 // ==========================================
 // Helper Functions
@@ -1370,14 +1425,127 @@ app.get('/api/3alamatak/gradebooks/:id/historical-records', verifyToken, require
   }
 });
 
-app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
-  const payload = req.body || {};
-  if (!payload.original_filename || !Array.isArray(payload.sheets)) {
-    return res.status(400).json({ message: 'An import filename and worksheet package are required.' });
+app.post('/api/3alamatak/gradebooks/:id/imports/analyze', verifyToken, requireActiveTeacherOrAdmin, handleUpload, async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: 'An Excel or delimited text file is required for analysis.' });
   }
   try {
     const gradebook = await getAlamatakGradebook(req, req.params.id);
     if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+
+    const isXlsx = /\.xlsx?$/i.test(req.file.originalname);
+    const sheets = isXlsx
+      ? await workbookParser.readXlsxWorkbook(req.file.buffer)
+      : [{ name: req.file.originalname.replace(/\.[^.]+$/, ''), rows: workbookParser.parseDelimited(req.file.buffer.toString('utf8')) }];
+
+    const [existingStudents] = await db.query(
+      'SELECT id, external_student_id, display_name, first_name, last_name, email FROM alamatak_students WHERE gradebook_id = ? AND status = "active"',
+      [gradebook.id]
+    );
+
+    const pkg = workbookParser.buildWorkbookImportPackage(sheets, req.file.originalname, {
+      existingStudents,
+      academicYear: gradebook.academic_year,
+    });
+
+    res.json({ pkg, sheets });
+  } catch (error) {
+    console.error('3alamatak analyze error:', error);
+    res.status(400).json({ message: error.message || 'Failed to analyze workbook.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeacherOrAdmin, handleOptionalUpload, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+
+    let payload = req.body || {};
+
+    if (req.file) {
+      const isXlsx = /\.xlsx?$/i.test(req.file.originalname);
+      const rawSheets = isXlsx
+        ? await workbookParser.readXlsxWorkbook(req.file.buffer)
+        : [{ name: req.file.originalname.replace(/\.[^.]+$/, ''), rows: workbookParser.parseDelimited(req.file.buffer.toString('utf8')) }];
+
+      let sheetSelections = [];
+      if (req.body.sheetSelections) {
+        try {
+          sheetSelections = typeof req.body.sheetSelections === 'string'
+            ? JSON.parse(req.body.sheetSelections)
+            : req.body.sheetSelections;
+        } catch (_) {}
+      }
+      if (Array.isArray(sheetSelections) && sheetSelections.length) {
+        const selectionMap = new Map(sheetSelections.map((s) => [s.name, Boolean(s.selected)]));
+        rawSheets.forEach((s) => {
+          if (selectionMap.has(s.name)) {
+            s.selected = selectionMap.get(s.name);
+          }
+        });
+      }
+
+      const [existingStudents] = await db.query(
+        'SELECT id, external_student_id, display_name, first_name, last_name, email FROM alamatak_students WHERE gradebook_id = ? AND status = "active"',
+        [gradebook.id]
+      );
+
+      const pkg = workbookParser.buildWorkbookImportPackage(rawSheets, req.file.originalname, {
+        existingStudents,
+        academicYear: req.body.academicYear || gradebook.academic_year,
+      });
+
+      let studentResolutions = {};
+      if (req.body.studentResolutions || req.body.resolutions) {
+        try {
+          const rawRes = req.body.studentResolutions || req.body.resolutions;
+          studentResolutions = typeof rawRes === 'string' ? JSON.parse(rawRes) : rawRes;
+        } catch (_) {}
+      }
+
+      const finalStudents = [];
+      const studentKeyToTargetMap = new Map();
+
+      (pkg.matched_students || []).forEach((m) => {
+        const res = studentResolutions[m.key] || { resolution: m.resolution, include: true };
+        if (!res.include || res.resolution === 'skip') return;
+
+        if (res.resolution === 'new' || !res.resolution) {
+          finalStudents.push({
+            key: m.key,
+            display_name: m.display_name,
+            first_name: m.first_name,
+            last_name: m.last_name,
+            external_student_id: m.external_student_id,
+            email: m.email,
+          });
+          studentKeyToTargetMap.set(m.key, m.key);
+        } else {
+          studentKeyToTargetMap.set(m.key, res.resolution);
+        }
+      });
+
+      payload = {
+        ...pkg,
+        students: finalStudents,
+        assessments: (pkg.assessments || []).map((ass) => ({
+          ...ass,
+          marks: (ass.marks || []).map((mk) => ({
+            ...mk,
+            student_key: studentKeyToTargetMap.get(mk.student_key) || mk.student_key,
+          })),
+        })),
+        historical_records: (pkg.historical_records || []).map((rec) => ({
+          ...rec,
+          student_key: studentKeyToTargetMap.get(rec.student_key) || rec.student_key,
+        })),
+      };
+    }
+
+    if (!payload.original_filename || !Array.isArray(payload.sheets)) {
+      return res.status(400).json({ message: 'An import filename and worksheet package are required.' });
+    }
+
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -1443,7 +1611,7 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
           componentIds.push(componentResult.insertId);
         }
         for (const mark of Array.isArray(assessment.marks) ? assessment.marks : []) {
-          const studentId = studentMap.get(mark.student_key || mark.external_student_id || mark.display_name);
+          const studentId = studentMap.get(mark.student_key || mark.external_student_id || mark.display_name) || (typeof mark.student_key === 'number' || /^\d+$/.test(mark.student_key) ? Number(mark.student_key) : null);
           const componentId = componentIds[Number(mark.component_index)];
           if (!studentId || !componentId) continue;
           await connection.query(
@@ -1488,7 +1656,7 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
       }
 
       for (const record of Array.isArray(payload.historical_records) ? payload.historical_records : []) {
-        const studentId = record.student_key ? studentMap.get(record.student_key) : null;
+        const studentId = record.student_key ? (studentMap.get(record.student_key) || (typeof record.student_key === 'number' || /^\d+$/.test(record.student_key) ? Number(record.student_key) : null)) : null;
         await connection.query(
           `INSERT INTO alamatak_historical_records
            (gradebook_id, student_id, import_id, record_type, source_year, payload)
@@ -1506,7 +1674,7 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
     }
   } catch (error) {
     console.error('3alamatak import error:', error);
-    res.status(500).json({ message: 'Internal server error.' });
+    res.status(500).json({ message: error.message || 'Internal server error.' });
   }
 });
 

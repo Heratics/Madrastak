@@ -25,6 +25,7 @@ import {
   parseGradeThresholdSheet,
   parseSubmissionTracker,
   parseTeamProjectsSheet,
+  readXlsxWorkbook,
 } from './workbookParser.js';
 import { validateAssessmentInput, validateGradebookInput, validateStudentInput } from './validation.js';
 
@@ -299,3 +300,17 @@ test('input validation rejects incomplete records', () => {
   assert.equal(validateStudentInput({ first_name: 'Aisha', last_name: 'Noor' }).value.display_name, 'Aisha Noor');
   assert.equal(validateAssessmentInput({ title: 'Quiz', components: [] }).valid, false);
 });
+
+test('readXlsxWorkbook parses real 27-worksheet workbook without errors', async () => {
+  const fs = await import('node:fs');
+  const testFile = 'E:/Documents/DAD WORK/Manastak/GP 0457 Grade 9 2026-2027.xlsx';
+  if (fs.existsSync(testFile)) {
+    const buf = fs.readFileSync(testFile);
+    const sheets = await readXlsxWorkbook(buf);
+    assert.equal(sheets.length, 27);
+    const pkg = buildWorkbookImportPackage(sheets, 'GP 0457 Grade 9 2026-2027.xlsx', { academicYear: '2026-2027' });
+    assert.equal(pkg.summary.totalSheets, 27);
+    assert.ok(pkg.summary.studentsCount > 0);
+  }
+});
+

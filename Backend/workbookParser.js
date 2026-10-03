@@ -403,11 +403,89 @@ function classifyWorksheet(sheet) {
   if (/^ir submission$/i.test(name)) return { type: 'assignments', label: 'Assignments / Submission Tracker', selected: true };
   if (/grade.?threshold/i.test(lowerName)) return { type: 'threshold', label: 'Grade Threshold Scheme', selected: true };
   if (/criteria|email list/i.test(lowerName)) return { type: 'reference', label: 'Reference / Criteria', selected: false };
-  if (/^sheet1$/i.test(name) || /^sheet3$/i.test(name) || /grade\s*9/i.test(name)) return { type: 'students', label: 'Students / Roster', selected: !sheet.hidden };
+  // Explicit roster sheets are the only source allowed to create students. Grade
+  // 9/assessment sheets contain marks for a roster, not an independent roster.
+  if (/^sheet1$/i.test(name) || /^sheet3$/i.test(name)) return { type: 'students', label: 'Students / Roster', selected: true };
+  if (/grade\s*\d/i.test(name) && rows.length > 4) return { type: 'grades', label: 'Grades / Assessments', selected: !sheet.hidden };
   if (hasNameBlock(rows) && (numericCount >= 3 || /assessment|exam|marks?|grade|score|question|semester|paper/i.test(`${name} ${preview}`))) {
     return { type: 'grades', label: 'Grades / Assessments', selected: !sheet.hidden };
   }
   return { type: 'reference', label: 'Reference / view only', selected: false };
+}
+
+function rosterPlanScore(plan) {
+  const rows = plan.rows || [];
+  const firstRow = rows[0] || [];
+  const nonEmptyRows = rows.filter((row) => row.some((cell) => cellText(cell))).length;
+  const hasEmail = rows.some((row) => row.some((cell) => /@/.test(cellText(cell))));
+  const singleColumn = rows.length > 0 && rows.every((row) => row.filter((cell) => cellText(cell)).length <= 1);
+  return (singleColumn ? 5 : 2) + (hasEmail ? 1 : 0) + (nonEmptyRows ? 1 : 0) + (/sheet3/i.test(plan.name) ? 1 : 0) + (firstRow.length === 1 ? 1 : 0);
+}
+
+function identifyCanonicalRosterPlans(plans) {
+  const candidates = plans.filter((plan) => plan.type === 'students' && (plan.rows || []).length);
+  if (!candidates.length) return [];
+  const bestScore = Math.max(...candidates.map(rosterPlanScore));
+  return candidates.filter((plan) => rosterPlanScore(plan) === bestScore);
+}
+
+function canonicalRosterFromPlans(plans) {
+  const candidates = identifyCanonicalRosterPlans(plans);
+  const rosterPlans = candidates.length ? candidates : plans.filter((plan) => plan.selected && plan.type === 'grades').length === 1
+    ? plans.filter((plan) => plan.selected && plan.type === 'grades')
+    : [];
+  const byId = new Map();
+  const byName = new Map();
+  for (const plan of rosterPlans) {
+    const sourceRows = plan.type === 'students'
+      ? plan.rows || []
+      : (findNameBlocks(plan.rows || []).flatMap((block) => {
+        const info = inferRowsForBlock(plan.rows || [], block);
+        return (plan.rows || []).slice(info.dataStart).map((row) => [row[block.nameCol], block.idCol >= 0 ? row[block.idCol] : null]);
+      }));
+    for (const row of sourceRows) {
+      const cells = row.map(cellText);
+      const name = cells.length === 1 ? cells[0] : cells.find((cell) => cell && !/@/.test(cell) && !/^\w[-\w]+$/.test(cell)) || '';
+      if (!name || !isPlausiblePersonName(name)) continue;
+      const externalId = cells.find((cell) => cell && /^\w[-\w]+$/.test(cell) && !/@/.test(cell)) || null;
+      const email = cells.find((cell) => /@/.test(cell)) || null;
+      const candidate = {
+        key: name,
+        display_name: name,
+        first_name: name.split(/\s+/)[0] || '',
+        last_name: name.split(/\s+/).slice(1).join(' '),
+        external_student_id: externalId,
+        email,
+      };
+      const normalized = normalizeImportedName(name);
+      const duplicate = (externalId && byId.get(String(externalId))) || byName.get(normalized) ||
+        Array.from(byName.values()).find((item) => importedNameScore(item.display_name, name) >= 0.95);
+      if (duplicate) {
+        if (!duplicate.external_student_id && externalId) duplicate.external_student_id = externalId;
+        if (!duplicate.email && email) duplicate.email = email;
+        continue;
+      }
+      byName.set(normalized, candidate);
+      if (externalId) byId.set(String(externalId), candidate);
+    }
+  }
+  return Array.from(byName.values());
+}
+
+function resolvePackageReferences(roster, assessments, historicalRecords) {
+  const unresolved = [];
+  const resolve = (reference) => {
+    const match = findConfidentNameMatch(roster, reference.payload?.student_name || reference.display_name || reference.student_key || '', reference.external_student_id || '');
+    if (match.item) return { ...reference, student_key: match.item.key };
+    unresolved.push({ student_key: reference.student_key, mode: match.mode, score: match.score });
+    return { ...reference, student_key: null };
+  };
+  const nextAssessments = assessments.map((assessment) => ({
+    ...assessment,
+    marks: (assessment.marks || []).map((mark) => resolve(mark)),
+  }));
+  const nextHistory = historicalRecords.map((record) => resolve(record));
+  return { assessments: nextAssessments, historicalRecords: nextHistory, unresolved };
 }
 
 function classifyWorkbook(sheets, fileName = '') {
@@ -757,53 +835,9 @@ function buildWorkbookImportPackage(sheets, fileName = '', options = {}) {
 
   const selectedPlans = plans.filter((p) => p.selected);
 
-  const rawStudentMap = new Map();
-  selectedPlans.forEach((plan) => {
-    const rows = plan.rows || [];
-    const blocks = findNameBlocks(rows);
-    if (blocks.length) {
-      blocks.forEach((b) => {
-        const info = inferRowsForBlock(rows, b);
-        for (let r = info.dataStart; r < rows.length; r++) {
-          const rawName = cellText(rows[r]?.[b.nameCol]);
-          if (!rawName || !isPlausiblePersonName(rawName)) continue;
-          const extId = b.idCol >= 0 ? cellText(rows[r]?.[b.idCol]) : null;
-          const norm = normalizeImportedName(rawName);
-          if (!rawStudentMap.has(norm)) {
-            const parts = rawName.split(/\s+/);
-            rawStudentMap.set(norm, {
-              key: rawName,
-              display_name: rawName,
-              first_name: parts[0] || '',
-              last_name: parts.slice(1).join(' ') || '',
-              external_student_id: extId || null,
-              email: null,
-            });
-          }
-        }
-      });
-    } else if (plan.type === 'students') {
-      rows.slice(1).forEach((row) => {
-        const name = cellText(row[0]) || cellText(row.slice(0, 2).filter(Boolean).join(' '));
-        if (name && isPlausiblePersonName(name)) {
-          const norm = normalizeImportedName(name);
-          if (!rawStudentMap.has(norm)) {
-            const parts = name.split(/\s+/);
-            rawStudentMap.set(norm, {
-              key: name,
-              display_name: name,
-              first_name: parts[0] || '',
-              last_name: parts.slice(1).join(' ') || '',
-              external_student_id: row[1] && /^\w[-\w]+$/.test(cellText(row[1])) ? cellText(row[1]) : null,
-              email: row.find((c) => /@/.test(cellText(c))) || null,
-            });
-          }
-        }
-      });
-    }
-  });
-
-  const extractedStudents = Array.from(rawStudentMap.values());
+  // Build the roster before parsing any assessment or history sheet. Those
+  // sheets may reference students, but never have authority to create them.
+  const extractedStudents = canonicalRosterFromPlans(plans);
   const matchedStudents = matchImportedRoster(existingStudents, extractedStudents);
 
   const schemes = [];
@@ -843,6 +877,8 @@ function buildWorkbookImportPackage(sheets, fileName = '', options = {}) {
     }
   });
 
+  const resolved = resolvePackageReferences(extractedStudents, assessments, historicalRecords);
+
   return {
     original_filename: fileName || 'workbook.xlsx',
     academic_year: academicYear,
@@ -853,8 +889,9 @@ function buildWorkbookImportPackage(sheets, fileName = '', options = {}) {
     students: extractedStudents,
     matched_students: matchedStudents,
     schemes,
-    assessments,
-    historical_records: historicalRecords,
+    assessments: resolved.assessments,
+    historical_records: resolved.historicalRecords,
+    diagnostics: { unresolved_references: resolved.unresolved },
     summary: {
       totalSheets: plans.length,
       selectedSheets: selectedPlans.length,
@@ -1123,6 +1160,9 @@ module.exports = {
   inferAssessmentTopic,
   classifyWorksheet,
   classifyWorkbook,
+  identifyCanonicalRosterPlans,
+  canonicalRosterFromPlans,
+  resolvePackageReferences,
   parseGradeThresholdSheet,
   extractAssessmentBlocks,
   parseBehaviorRecords,

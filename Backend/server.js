@@ -9,6 +9,8 @@ const db = require('./db');
 const { generateJaasToken } = require('./jaas');
 const { seedAdmin } = require('./seed-admin');
 const workbookParser = require('./workbookParser');
+const { persistImportTransaction } = require('./importPersistence');
+const { filterGradebooksForList } = require('./gradebookAccess');
 
 const app = express();
 
@@ -771,7 +773,7 @@ app.get('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, a
   try {
     const params = [];
     const includeAll = req.user.role === 'admin' && req.query.all === 'true';
-    const ownership = includeAll ? '' : 'WHERE g.owner_user_id = ?';
+    const ownership = includeAll ? '' : 'WHERE g.owner_user_id = ? AND g.status = \'active\'';
     if (!includeAll) params.push(req.user.id);
     const [gradebooks] = await db.query(
       `SELECT g.id, g.owner_user_id, g.madrastak_class_id, g.title, g.subject,
@@ -784,7 +786,7 @@ app.get('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, a
        ORDER BY g.updated_at DESC`,
       params
     );
-    res.json(gradebooks);
+    res.json(filterGradebooksForList(gradebooks, { includeArchived: includeAll }));
   } catch (error) {
     console.error('3alamatak gradebook list error:', error);
     res.status(500).json({ message: 'Internal server error.' });
@@ -1548,131 +1550,12 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
     }
 
     const connection = await db.getConnection();
-    try {
-      await connection.beginTransaction();
-      const [importResult] = await connection.query(
-        `INSERT INTO alamatak_imports
-         (gradebook_id, uploaded_by, original_filename, academic_year, detected_class, detected_subject, workbook_type, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [gradebook.id, req.user.id, String(payload.original_filename).slice(0, 512), payload.academic_year || null, payload.detected_class || null, payload.detected_subject || null, payload.workbook_type || null, JSON.stringify(payload.metadata || {})]
-      );
-      for (const sheet of payload.sheets) {
-        const rows = Array.isArray(sheet.rows) ? sheet.rows : [];
-        await connection.query(
-          `INSERT INTO alamatak_import_sheets
-           (import_id, sheet_name, visibility, classification, source_year, selected, row_count, column_count, raw_rows, diagnostics)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [importResult.insertId, String(sheet.name || 'Sheet').slice(0, 255), sheet.hidden ? 'hidden' : 'visible', sheet.type || 'reference', sheet.source_year || null, Boolean(sheet.selected), rows.length, Math.max(0, ...rows.map((row) => row.length)), JSON.stringify(rows), JSON.stringify(sheet.diagnostics || [])]
-        );
-      }
-
-      const studentMap = new Map();
-      for (const student of Array.isArray(payload.students) ? payload.students : []) {
-        const displayName = String(student.display_name || student.name || '').trim();
-        if (!displayName) continue;
-        const externalId = student.external_student_id ? String(student.external_student_id).trim() : null;
-        let existing = null;
-        if (externalId) {
-          const [rows] = await connection.query('SELECT id FROM alamatak_students WHERE gradebook_id = ? AND external_student_id = ?', [gradebook.id, externalId]);
-          existing = rows[0];
-        }
-        if (!existing) {
-          const [rows] = await connection.query('SELECT id FROM alamatak_students WHERE gradebook_id = ? AND display_name = ?', [gradebook.id, displayName]);
-          existing = rows[0];
-        }
-        if (existing) {
-          studentMap.set(student.key || externalId || displayName, existing.id);
-        } else {
-          const [result] = await connection.query(
-            `INSERT INTO alamatak_students
-             (gradebook_id, linked_user_id, external_student_id, first_name, last_name, display_name, email, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [gradebook.id, null, externalId, student.first_name || '', student.last_name || '', displayName, student.email || null, student.notes || null]
-          );
-          studentMap.set(student.key || externalId || displayName, result.insertId);
-        }
-      }
-
-      for (const assessment of Array.isArray(payload.assessments) ? payload.assessments : []) {
-        const components = normalizeAssessmentComponents(assessment.components);
-        if (!assessment.title || !components) continue;
-        const [assessmentResult] = await connection.query(
-          `INSERT INTO alamatak_assessments
-           (gradebook_id, title, strand, topic, assessment_date, source_import_id, is_historical, source_year)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [gradebook.id, assessment.title, assessment.strand || null, assessment.topic || null, assessment.assessment_date || null, importResult.insertId, Boolean(assessment.is_historical), assessment.source_year || null]
-        );
-        const componentIds = [];
-        for (const component of components) {
-          const [componentResult] = await connection.query(
-            `INSERT INTO alamatak_assessment_components
-             (assessment_id, name, maximum_score, sort_order) VALUES (?, ?, ?, ?)`,
-            [assessmentResult.insertId, component.name, component.maximum_score, component.sort_order]
-          );
-          componentIds.push(componentResult.insertId);
-        }
-        for (const mark of Array.isArray(assessment.marks) ? assessment.marks : []) {
-          const studentId = studentMap.get(mark.student_key || mark.external_student_id || mark.display_name) || (typeof mark.student_key === 'number' || /^\d+$/.test(mark.student_key) ? Number(mark.student_key) : null);
-          const componentId = componentIds[Number(mark.component_index)];
-          if (!studentId || !componentId) continue;
-          await connection.query(
-            `INSERT INTO alamatak_marks
-             (component_id, student_id, score, mark_status, comment, follow_up_required)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE score = VALUES(score), mark_status = VALUES(mark_status), comment = VALUES(comment), follow_up_required = VALUES(follow_up_required)`,
-            [componentId, studentId, mark.score ?? null, mark.mark_status || null, mark.comment || null, Boolean(mark.follow_up_required)]
-          );
-        }
-      }
-
-      for (const scheme of Array.isArray(payload.schemes) ? payload.schemes : []) {
-        if (!scheme.name) continue;
-        const [schemeResult] = await connection.query(
-          `INSERT INTO alamatak_grading_schemes
-           (gradebook_id, name, source_import_id, is_fallback)
-           VALUES (?, ?, ?, ?)`,
-          [gradebook.id, scheme.name, importResult.insertId, Boolean(scheme.is_fallback)]
-        );
-        const schemeId = schemeResult.insertId;
-        for (const [key, comp] of Object.entries(scheme.components || {})) {
-          const [compResult] = await connection.query(
-            `INSERT INTO alamatak_grading_components
-             (scheme_id, component_key, label, maximum_score)
-             VALUES (?, ?, ?, ?)`,
-            [schemeId, key, comp.label || key, comp.maximum_score != null ? Number(comp.maximum_score) : null]
-          );
-          const compId = compResult.insertId;
-          const thresholds = comp.thresholds || {};
-          for (const [gradeLabel, minScore] of Object.entries(thresholds)) {
-            if (minScore !== null && minScore !== undefined && !isNaN(Number(minScore))) {
-              await connection.query(
-                `INSERT INTO alamatak_grade_thresholds
-                 (grading_component_id, grade_label, minimum_score)
-                 VALUES (?, ?, ?)`,
-                [compId, gradeLabel, Number(minScore)]
-              );
-            }
-          }
-        }
-      }
-
-      for (const record of Array.isArray(payload.historical_records) ? payload.historical_records : []) {
-        const studentId = record.student_key ? (studentMap.get(record.student_key) || (typeof record.student_key === 'number' || /^\d+$/.test(record.student_key) ? Number(record.student_key) : null)) : null;
-        await connection.query(
-          `INSERT INTO alamatak_historical_records
-           (gradebook_id, student_id, import_id, record_type, source_year, payload)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [gradebook.id, studentId || null, importResult.insertId, record.record_type || 'imported', record.source_year || payload.academic_year || 'unknown', JSON.stringify(record.payload || record)]
-        );
-      }
-      await connection.commit();
-      res.status(201).json({ import_id: importResult.insertId, message: 'Import persisted.' });
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
+    const result = await persistImportTransaction(connection, {
+      gradebookId: gradebook.id,
+      uploadedBy: req.user.id,
+      payload,
+    });
+    res.status(201).json({ import_id: result.importId, message: 'Import persisted.', summary: result });
   } catch (error) {
     console.error('3alamatak import error:', error);
     res.status(500).json({ message: error.message || 'Internal server error.' });

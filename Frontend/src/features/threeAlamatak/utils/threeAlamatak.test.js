@@ -28,6 +28,7 @@ import {
   readXlsxWorkbook,
 } from './workbookParser.js';
 import { validateAssessmentInput, validateGradebookInput, validateStudentInput } from './validation.js';
+import { toClassUpdatePayload, toEditableClassState } from '../../../pages/classPersistence.js';
 
 test('grade calculations preserve completion and partial states', () => {
   const assessment = {
@@ -314,3 +315,32 @@ test('readXlsxWorkbook parses real 27-worksheet workbook without errors', async 
   }
 });
 
+test('canonical roster prevents grade, project, history, and conduct rows from creating students', () => {
+  const pkg = buildWorkbookImportPackage([
+    { name: 'Sheet3', hidden: true, rows: [['Aisha Noor'], ['Omar Saleh']] },
+    { name: 'Grades', rows: [['Student Name', 'Quiz'], ['Mark', '10'], ['Aisha Noor', '9'], ['Historical Student', '8']] },
+    { name: 'Conduct', rows: [['Name'], ['Project-only Student', 'Note']] },
+    { name: 'List of Teams', rows: [['Team', 'Topic', 'Members'], ['1', 'Topic', 'Omar Saleh']] },
+  ], 'roster.xlsx');
+  assert.deepEqual(pkg.students.map((student) => student.display_name), ['Aisha Noor', 'Omar Saleh']);
+  assert.ok(pkg.assessments[0].marks.some((mark) => mark.student_key === 'Aisha Noor'));
+  assert.ok(!pkg.students.some((student) => student.display_name.includes('Historical')));
+});
+
+test('cross-sheet aliases resolve to one canonical student and ambiguous names remain unresolved', () => {
+  const pkg = buildWorkbookImportPackage([
+    { name: 'Sheet3', rows: [['Mohammad Saleh'], ['Sara Qasim']] },
+    { name: 'Marks', rows: [['Student Name', 'Quiz'], ['Mark', '10'], ['Mohd Saleh', '8'], ['Sara Qasem', '7']] },
+  ]);
+  assert.equal(pkg.students.length, 2);
+  assert.equal(pkg.assessments[0].marks[0].student_key, 'Mohammad Saleh');
+  assert.equal(pkg.assessments[0].marks[1].student_key, null);
+});
+
+test('class persistence maps persisted snake_case start_time to edit state and back', () => {
+  const state = toEditableClassState({ id: 4, title: 'Class', description: 'Details', start_time: '2026-10-04T10:00:00.000Z', duration_minutes: 60, student_limit: 20 });
+  assert.equal(state.classId, 4);
+  assert.match(state.startTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  assert.equal(toClassUpdatePayload(state).start_time, '2026-10-04T10:00:00.000Z');
+  assert.throws(() => toClassUpdatePayload(undefined), /scheduled start time/);
+});

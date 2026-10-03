@@ -9,6 +9,7 @@ import {
   RotateCcw, Edit3 
 } from 'lucide-react';
 import { API_URL } from '../config';
+import { toClassUpdatePayload, toEditableClassState } from './classPersistence';
 
 export default function TeacherDashboard() {
   const { user, logout } = useContext(AuthContext);
@@ -381,24 +382,8 @@ export default function TeacherDashboard() {
 
   // --- Edit Course Handlers ---
   const handleOpenEdit = (cls) => {
-    let localIso = '';
-    if (cls.start_time) {
-      const d = new Date(cls.start_time);
-      const offsetMs = d.getTimezoneOffset() * 60000;
-      localIso = new Date(d.getTime() - offsetMs).toISOString().slice(0, 16);
-    }
-    const isNoLimit = cls.duration_minutes >= 999999;
-    setEditModal({
-      open: true,
-      classId: cls.id,
-      title: cls.title || '',
-      description: cls.description || '',
-      startTime: localIso,
-      isNoLimitDuration: isNoLimit,
-      durationMinutes: isNoLimit ? '60' : String(cls.duration_minutes || 60),
-      studentLimit: String(cls.student_limit || 20),
-      submitting: false
-    });
+    const nextEditState = toEditableClassState(cls);
+    if (nextEditState) setEditModal(nextEditState);
   };
 
   const handleSaveEdit = async (e) => {
@@ -438,11 +423,7 @@ export default function TeacherDashboard() {
           'Authorization': `Bearer ${currentToken}`
         },
         body: JSON.stringify({
-          title: editModal.title.trim(),
-          description: editModal.description.trim(),
-          start_time: new Date(editModal.startTime).toISOString(),
-          duration_minutes: finalDuration,
-          student_limit: parsedLimit
+          ...toClassUpdatePayload({ ...editModal, durationMinutes: String(finalDuration), studentLimit: String(parsedLimit) })
         })
       });
       const data = await res.json();

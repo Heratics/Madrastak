@@ -63,17 +63,17 @@ export function importedNameScore(firstName, secondName) {
 
 export function findConfidentNameMatch(roster, name, externalId = '') {
   if (externalId) {
-    const byId = roster.find((student) => String(student.id || '') === String(externalId));
+    const byId = roster.find((student) => String(student.external_student_id || student.id || '') === String(externalId));
     if (byId) return { item: byId, score: 1, mode: 'id' };
   }
 
   const normalized = normalizeImportedName(name);
-  const exact = roster.filter((student) => normalizeImportedName(student.name) === normalized);
+  const exact = roster.filter((student) => normalizeImportedName(student.display_name || student.name) === normalized);
   if (exact.length === 1) return { item: exact[0], score: 1, mode: 'exact' };
   if (exact.length > 1) return { item: null, score: 1, mode: 'ambiguous-exact' };
 
   const scored = roster
-    .map((student) => ({ item: student, score: importedNameScore(student.name, name) }))
+    .map((student) => ({ item: student, score: importedNameScore(student.display_name || student.name, name) }))
     .sort((first, second) => second.score - first.score);
   if (!scored.length || scored[0].score < 0.9) return { item: null, score: scored[0]?.score || 0, mode: 'low-confidence' };
   if (scored[1] && scored[0].score - scored[1].score < 0.07) return { item: null, score: scored[0].score, mode: 'ambiguous-fuzzy' };

@@ -770,8 +770,9 @@ async function validateLinkedStudent(linkedUserId) {
 app.get('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   try {
     const params = [];
-    const ownership = req.user.role === 'admin' ? '' : 'WHERE g.owner_user_id = ?';
-    if (req.user.role !== 'admin') params.push(req.user.id);
+    const includeAll = req.user.role === 'admin' && req.query.all === 'true';
+    const ownership = includeAll ? '' : 'WHERE g.owner_user_id = ?';
+    if (!includeAll) params.push(req.user.id);
     const [gradebooks] = await db.query(
       `SELECT g.id, g.owner_user_id, g.madrastak_class_id, g.title, g.subject,
               g.academic_year, g.status, g.created_at, g.updated_at,
@@ -1439,7 +1440,7 @@ app.post('/api/3alamatak/gradebooks/:id/imports/analyze', verifyToken, requireAc
       : [{ name: req.file.originalname.replace(/\.[^.]+$/, ''), rows: workbookParser.parseDelimited(req.file.buffer.toString('utf8')) }];
 
     const [existingStudents] = await db.query(
-      'SELECT id, external_student_id, display_name, first_name, last_name, email FROM alamatak_students WHERE gradebook_id = ? AND status = "active"',
+      "SELECT id, external_student_id, display_name, first_name, last_name, email FROM alamatak_students WHERE gradebook_id = ? AND status = 'active'",
       [gradebook.id]
     );
 
@@ -1486,7 +1487,7 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
       }
 
       const [existingStudents] = await db.query(
-        'SELECT id, external_student_id, display_name, first_name, last_name, email FROM alamatak_students WHERE gradebook_id = ? AND status = "active"',
+        "SELECT id, external_student_id, display_name, first_name, last_name, email FROM alamatak_students WHERE gradebook_id = ? AND status = 'active'",
         [gradebook.id]
       );
 
@@ -2740,5 +2741,4 @@ async function startServer() {
 if (require.main === module) {
   startServer();
 }
-
-module.exports = { app, startServer };
+module.exports = app;

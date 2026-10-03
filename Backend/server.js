@@ -986,6 +986,7 @@ async function getOwnedAssessment(req, assessmentId) {
 function normalizeAssessmentComponents(components) {
   if (!Array.isArray(components) || components.length === 0) return null;
   const normalized = components.map((component, index) => ({
+    id: component.id ? Number(component.id) : null,
     name: String(component.name || '').trim(),
     maximum_score: Number(component.maximum_score ?? component.max),
     sort_order: Number.isInteger(component.sort_order) ? component.sort_order : index,
@@ -1089,16 +1090,44 @@ app.put('/api/3alamatak/assessments/:id', verifyToken, requireActiveTeacherOrAdm
          WHERE id = ?`,
         [String(title).trim(), strand, topic, assessment_date || null, source_import_id || null, Boolean(is_historical), source_year || null, assessment.id]
       );
-      await connection.query('DELETE FROM alamatak_assessment_components WHERE assessment_id = ?', [assessment.id]);
+      const [existingComponents] = await connection.query(
+        'SELECT id FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
+        [assessment.id]
+      );
+      const existingIds = new Set(existingComponents.map((component) => Number(component.id)));
+      const retainedIds = new Set();
       for (const component of components) {
+        if (component.id && existingIds.has(component.id)) {
+          retainedIds.add(component.id);
+          await connection.query(
+            `UPDATE alamatak_assessment_components
+             SET name = ?, maximum_score = ?, sort_order = ?
+             WHERE id = ? AND assessment_id = ?`,
+            [component.name, component.maximum_score, component.sort_order, component.id, assessment.id]
+          );
+        } else {
+          const [createdComponent] = await connection.query(
+            `INSERT INTO alamatak_assessment_components
+             (assessment_id, name, maximum_score, sort_order) VALUES (?, ?, ?, ?)`,
+            [assessment.id, component.name, component.maximum_score, component.sort_order]
+          );
+          retainedIds.add(Number(createdComponent.insertId));
+        }
+      }
+      const removedIds = [...existingIds].filter((id) => !retainedIds.has(id));
+      if (removedIds.length) {
         await connection.query(
-          `INSERT INTO alamatak_assessment_components
-           (assessment_id, name, maximum_score, sort_order) VALUES (?, ?, ?, ?)`,
-          [assessment.id, component.name, component.maximum_score, component.sort_order]
+          `DELETE FROM alamatak_assessment_components
+           WHERE assessment_id = ? AND id IN (${removedIds.map(() => '?').join(',')})`,
+          [assessment.id, ...removedIds]
         );
       }
       await connection.commit();
-      res.json({ id: assessment.id, gradebook_id: assessment.gradebook_id, title: String(title).trim(), components });
+      const [savedComponents] = await db.query(
+        'SELECT id, assessment_id, name, maximum_score, sort_order FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
+        [assessment.id]
+      );
+      res.json({ id: assessment.id, gradebook_id: assessment.gradebook_id, title: String(title).trim(), strand, topic, assessment_date, source_import_id, is_historical: Boolean(is_historical), source_year, components: savedComponents });
     } catch (error) {
       await connection.rollback();
       throw error;
@@ -1428,6 +1457,55 @@ app.get('/api/3alamatak/gradebooks/:id/historical-records', verifyToken, require
   }
 });
 
+async function getOwnedHistoricalRecord(req, recordId) {
+  const params = [recordId];
+  const ownership = req.user.role === 'admin' ? '' : ' AND g.owner_user_id = ?';
+  if (req.user.role !== 'admin') params.push(req.user.id);
+  const [rows] = await db.query(
+    `SELECT h.id, h.gradebook_id, h.student_id, h.import_id, h.record_type, h.source_year, h.payload
+     FROM alamatak_historical_records h
+     JOIN alamatak_gradebooks g ON g.id = h.gradebook_id
+     WHERE h.id = ?${ownership}`,
+    params
+  );
+  return rows[0] || null;
+}
+
+app.put('/api/3alamatak/historical-records/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const record = await getOwnedHistoricalRecord(req, req.params.id);
+    if (!record) return res.status(404).json({ message: 'Historical record not found.' });
+    const { record_type = record.record_type, source_year = record.source_year, student_id = record.student_id } = req.body || {};
+    let payload = req.body?.payload;
+    if (typeof payload === 'string') payload = JSON.parse(payload);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return res.status(400).json({ message: 'A structured record payload is required.' });
+    if (student_id != null) {
+      const [students] = await db.query('SELECT id FROM alamatak_students WHERE id = ? AND gradebook_id = ?', [student_id, record.gradebook_id]);
+      if (!students.length) return res.status(400).json({ message: 'Student does not belong to this gradebook.' });
+    }
+    await db.query(
+      'UPDATE alamatak_historical_records SET student_id = ?, record_type = ?, source_year = ?, payload = ? WHERE id = ?',
+      [student_id || null, String(record_type), source_year || null, JSON.stringify(payload), record.id]
+    );
+    res.json({ ...record, student_id: student_id || null, record_type: String(record_type), source_year: source_year || null, payload: JSON.stringify(payload) });
+  } catch (error) {
+    console.error('3alamatak historical record update error:', error);
+    res.status(400).json({ message: error.message || 'Failed to update historical record.' });
+  }
+});
+
+app.delete('/api/3alamatak/historical-records/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const record = await getOwnedHistoricalRecord(req, req.params.id);
+    if (!record) return res.status(404).json({ message: 'Historical record not found.' });
+    await db.query('DELETE FROM alamatak_historical_records WHERE id = ?', [record.id]);
+    res.json({ message: 'Historical record deleted.' });
+  } catch (error) {
+    console.error('3alamatak historical record delete error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
 app.post('/api/3alamatak/gradebooks/:id/imports/analyze', verifyToken, requireActiveTeacherOrAdmin, handleUpload, async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'An Excel or delimited text file is required for analysis.' });
@@ -1497,6 +1575,10 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
         existingStudents,
         academicYear: req.body.academicYear || gradebook.academic_year,
       });
+      pkg.metadata = {
+        ...(pkg.metadata || {}),
+        source_hash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
+      };
 
       let studentResolutions = {};
       if (req.body.studentResolutions || req.body.resolutions) {

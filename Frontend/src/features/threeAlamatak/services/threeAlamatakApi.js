@@ -56,4 +56,6 @@ export const threeAlamatakApi = {
     const q = new URLSearchParams(params).toString();
     return request(`/api/3alamatak/gradebooks/${id}/historical-records${q ? `?${q}` : ''}`);
   },
+  updateHistoricalRecord: (id, payload) => request(`/api/3alamatak/historical-records/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteHistoricalRecord: (id) => request(`/api/3alamatak/historical-records/${id}`, { method: 'DELETE' }),
 };

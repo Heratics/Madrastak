@@ -225,7 +225,6 @@ export function classifyWorksheet(sheet) {
   if (/criteria|email list/i.test(lowerName)) return { type: 'reference', label: 'Reference / Criteria', selected: false };
   // Explicit roster sheets are the only source allowed to create students.
   if (/^sheet1$/i.test(name) || /^sheet3$/i.test(name)) return { type: 'students', label: 'Students / Roster', selected: true };
-  if (/grade\s*\d/i.test(name) && rows.length > 4) return { type: 'grades', label: 'Grades / Assessments', selected: !sheet.hidden };
   if (hasNameBlock(rows) && (numericCount >= 3 || /assessment|exam|marks?|grade|score|question|semester|paper/i.test(`${name} ${preview}`))) {
     return { type: 'grades', label: 'Grades / Assessments', selected: !sheet.hidden };
   }
@@ -303,6 +302,36 @@ function resolvePackageReferences(roster, assessments, historicalRecords) {
     historicalRecords: historicalRecords.map(resolve),
     unresolved,
   };
+}
+
+export function canonicalAssessmentIdentity(assessment) {
+  const title = normalizeImportedName(assessment.title)
+    .replace(/\bquastion\b/g, 'question')
+    .replace(/[^a-z0-9]+/g, '');
+  const components = (assessment.components || [])
+    .map((component) => `${normalizeImportedName(component.name).replace(/[^a-z0-9]+/g, '')}:${Number(component.maximum_score)}`)
+    .join('|');
+  return `${title}|${assessment.assessment_date || ''}|${assessment.source_year || ''}|${components}`;
+}
+
+export function deduplicateAssessments(assessments) {
+  const byIdentity = new Map();
+  for (const assessment of assessments || []) {
+    const identity = canonicalAssessmentIdentity(assessment);
+    const existing = byIdentity.get(identity);
+    if (!existing) {
+      byIdentity.set(identity, { ...assessment, source_sheets: [...new Set(assessment.source_sheets || [assessment.source_sheet].filter(Boolean))] });
+      continue;
+    }
+    const marks = new Map((existing.marks || []).map((mark) => [`${mark.student_key || ''}:${mark.component_index}`, mark]));
+    for (const mark of assessment.marks || []) {
+      const key = `${mark.student_key || ''}:${mark.component_index}`;
+      if (!marks.has(key) || (marks.get(key).score == null && mark.score != null)) marks.set(key, mark);
+    }
+    existing.marks = [...marks.values()];
+    existing.source_sheets = [...new Set([...(existing.source_sheets || []), ...(assessment.source_sheets || []), assessment.source_sheet].filter(Boolean))];
+  }
+  return [...byIdentity.values()];
 }
 
 export function classifyWorkbook(sheets, fileName = '') {
@@ -461,6 +490,7 @@ export function extractAssessmentBlocks(sheet, roster = [], unmatched = new Set(
 
     results.push({
       title,
+      source_sheet: sheet.name,
       strand: /social/i.test(sheet.name) ? 'Social' : (/team project|gp project/i.test(title) ? 'Team Project' : 'General'),
       topic,
       assessment_date: null,
@@ -697,7 +727,7 @@ export function buildWorkbookImportPackage(sheets, fileName = '', options = {}) 
     }
   });
 
-  const resolved = resolvePackageReferences(extractedStudents, assessments, historicalRecords);
+  const resolved = resolvePackageReferences(extractedStudents, deduplicateAssessments(assessments), historicalRecords);
 
   return {
     original_filename: fileName || 'workbook.xlsx',

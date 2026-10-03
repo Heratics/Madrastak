@@ -54,6 +54,20 @@ function buildUniqueStudents(students) {
 }
 
 async function persistImportPackage(connection, { gradebookId, uploadedBy, payload }) {
+  const sourceHash = payload.metadata?.source_hash;
+  if (sourceHash) {
+    const [priorImports] = await connection.query(
+      'SELECT id, metadata FROM alamatak_imports WHERE gradebook_id = ? AND original_filename = ? ORDER BY id DESC',
+      [gradebookId, String(payload.original_filename).slice(0, 512)]
+    );
+    const prior = priorImports.find((item) => {
+      try {
+        const metadata = typeof item.metadata === 'string' ? JSON.parse(item.metadata || '{}') : (item.metadata || {});
+        return metadata.source_hash === sourceHash;
+      } catch (_) { return false; }
+    });
+    if (prior) return { importId: prior.id, idempotent: true, students: 0, assessments: 0, marks: 0, history: 0 };
+  }
   const students = buildUniqueStudents(payload.students);
   const [importResult] = await connection.query(
     `INSERT INTO alamatak_imports

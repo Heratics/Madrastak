@@ -14,6 +14,7 @@ import {
 } from './rosterMatching.js';
 import {
   buildWorkbookImportPackage,
+  deduplicateAssessments,
   classifyWorksheet,
   exportGradebookToHtml,
   exportGradebookToXml,
@@ -335,6 +336,21 @@ test('cross-sheet aliases resolve to one canonical student and ambiguous names r
   assert.equal(pkg.students.length, 2);
   assert.equal(pkg.assessments[0].marks[0].student_key, 'Mohammad Saleh');
   assert.equal(pkg.assessments[0].marks[1].student_key, null);
+});
+
+test('duplicate assessment sheets merge into one assessment without duplicate marks', () => {
+  const assessment = {
+    title: 'Quastion Paper 0457/11M/J2026', source_sheet: 'Grade 9A',
+    components: [{ name: 'Reading', maximum_score: 20 }],
+    marks: [{ student_key: 'Aisha Noor', component_index: 0, score: 17 }],
+  };
+  const merged = deduplicateAssessments([
+    assessment,
+    { ...assessment, title: 'Question Paper 0457/11M/J2026', source_sheet: 'Grade 9 B', marks: [{ student_key: 'Aisha Noor', component_index: 0, score: 17 }] },
+  ]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].marks.length, 1);
+  assert.deepEqual(merged[0].source_sheets.sort(), ['Grade 9 B', 'Grade 9A'].sort());
 });
 
 test('class persistence maps persisted snake_case start_time to edit state and back', () => {

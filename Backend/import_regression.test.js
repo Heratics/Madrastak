@@ -51,3 +51,24 @@ test('persistImportPackage batches writes and persistImportTransaction rolls bac
   await assert.rejects(() => persistImportTransaction(transactional, { gradebookId: 1, uploadedBy: 2, payload }), /forced import failure/);
   assert.equal(rolledBack, true);
 });
+
+test('repeating the same source workbook is idempotent', async () => {
+  const calls = [];
+  const connection = {
+    async query(sql, params) {
+      calls.push(sql);
+      if (/SELECT id, metadata FROM alamatak_imports/.test(sql)) {
+        return [[{ id: 44, metadata: JSON.stringify({ source_hash: 'same-workbook' }) }]];
+      }
+      throw new Error('A repeated import must return before writing new rows.');
+    },
+  };
+  const result = await persistImportPackage(connection, {
+    gradebookId: 1,
+    uploadedBy: 2,
+    payload: { original_filename: 'GP 0457 Grade 9 2026-2027.xlsx', metadata: { source_hash: 'same-workbook' } },
+  });
+  assert.equal(result.idempotent, true);
+  assert.equal(result.importId, 44);
+  assert.equal(calls.length, 1);
+});

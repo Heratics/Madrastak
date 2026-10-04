@@ -11,6 +11,7 @@ const { seedAdmin } = require('./seed-admin');
 const workbookParser = require('./workbookParser');
 const { persistImportTransaction } = require('./importPersistence');
 const { filterGradebooksForList } = require('./gradebookAccess');
+const { calculateFinalGrades, validateThresholdScheme } = require('./finalGradeCalculator');
 
 const app = express();
 
@@ -1395,6 +1396,97 @@ app.put('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeache
   }
 });
 
+async function loadFinalGradeView(req, gradebookId) {
+  const gradebook = await getAlamatakGradebook(req, gradebookId);
+  if (!gradebook) return null;
+  const [configRows] = await db.query('SELECT * FROM alamatak_final_grade_configs WHERE gradebook_id = ?', [gradebook.id]);
+  const configRow = configRows[0] || null;
+  let config = null;
+  if (configRow) {
+    const [categories] = await db.query('SELECT * FROM alamatak_final_grade_categories WHERE config_id = ? ORDER BY sort_order, id', [configRow.id]);
+    const categoryIds = categories.map((category) => category.id);
+    const [items] = categoryIds.length ? await db.query('SELECT * FROM alamatak_final_grade_items WHERE category_id IN (?) ORDER BY id', [categoryIds]) : [[]];
+    config = { ...configRow, categories, items };
+  }
+  const [students] = await db.query("SELECT id, display_name, external_student_id, status FROM alamatak_students WHERE gradebook_id = ? AND status <> 'archived' ORDER BY display_name", [gradebook.id]);
+  const [assessments] = await db.query('SELECT id, title, assessment_date, is_historical, source_year FROM alamatak_assessments WHERE gradebook_id = ? AND is_historical = FALSE ORDER BY assessment_date IS NULL, assessment_date, id', [gradebook.id]);
+  const [components] = await db.query(`SELECT c.id, c.assessment_id, c.name, c.maximum_score, c.sort_order FROM alamatak_assessment_components c JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ? AND a.is_historical = FALSE ORDER BY c.assessment_id, c.sort_order, c.id`, [gradebook.id]);
+  const [marks] = await db.query(`SELECT m.component_id, m.student_id, m.score, m.mark_status, m.comment, m.updated_at FROM alamatak_marks m JOIN alamatak_assessment_components c ON c.id = m.component_id JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ? AND a.is_historical = FALSE`, [gradebook.id]);
+  let scheme = null;
+  if (config?.scheme_id) {
+    const [schemes] = await db.query('SELECT id, name, is_fallback FROM alamatak_grading_schemes WHERE id = ? AND gradebook_id = ?', [config.scheme_id, gradebook.id]);
+    if (schemes.length) {
+      const [schemeComponents] = await db.query('SELECT id, component_key, label, maximum_score FROM alamatak_grading_components WHERE scheme_id = ?', [config.scheme_id]);
+      const ids = schemeComponents.map((component) => component.id);
+      const [thresholds] = ids.length ? await db.query('SELECT grading_component_id, grade_label, minimum_score FROM alamatak_grade_thresholds WHERE grading_component_id IN (?)', [ids]) : [[]];
+      scheme = { ...schemes[0], components: Object.fromEntries(schemeComponents.map((component) => [component.component_key, { label: component.label, maximum_score: component.maximum_score == null ? null : Number(component.maximum_score), thresholds: Object.fromEntries(thresholds.filter((threshold) => threshold.grading_component_id === component.id).map((threshold) => [threshold.grade_label, Number(threshold.minimum_score)])) }])) };
+    }
+  }
+  const calculation = calculateFinalGrades({ students, assessments, components, marks, config, scheme });
+  const latestMark = marks.reduce((latest, mark) => Math.max(latest, new Date(mark.updated_at || 0).getTime()), 0);
+  const stale = Boolean(config?.status === 'finalized' && Math.max(latestMark, new Date(config.updated_at || 0).getTime()) > new Date(config.finalized_at || 0).getTime());
+  return { gradebook, config, scheme, assessments, components, readiness: calculation.readiness, results: calculation.results, finalized_stale: stale };
+}
+
+app.get('/api/3alamatak/gradebooks/:id/final-grades', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try { const view = await loadFinalGradeView(req, req.params.id); if (!view) return res.status(404).json({ message: 'Gradebook not found.' }); res.json(view); }
+  catch (error) { console.error('3alamatak final grades error:', error); res.status(500).json({ message: 'Internal server error.' }); }
+});
+
+app.put('/api/3alamatak/gradebooks/:id/final-grades/config', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { scheme_id = null, categories = [] } = req.body || {};
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    if (!Array.isArray(categories) || !categories.length) return res.status(400).json({ message: 'At least one final-grade category is required.' });
+    const [assessmentRows] = await db.query('SELECT id FROM alamatak_assessments WHERE gradebook_id = ? AND is_historical = FALSE', [gradebook.id]);
+    const [componentRows] = await db.query('SELECT c.id, c.assessment_id FROM alamatak_assessment_components c JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ? AND a.is_historical = FALSE', [gradebook.id]);
+    const assessmentIds = new Set(assessmentRows.map((row) => Number(row.id))); const componentMap = new Map(componentRows.map((row) => [Number(row.id), Number(row.assessment_id)]));
+    const categoryWeight = categories.reduce((sum, category) => sum + Number(category.weight || 0), 0);
+    if (categories.some((category) => !String(category.name || '').trim() || Number(category.weight) < 0)) return res.status(400).json({ message: 'Categories require names and non-negative weights.' });
+    if (Math.abs(categoryWeight - 100) > 0.001) return res.status(400).json({ message: `Category weights must total 100%; current total is ${categoryWeight}.` });
+    if (scheme_id !== null) { const [schemes] = await db.query('SELECT id FROM alamatak_grading_schemes WHERE id = ? AND gradebook_id = ?', [scheme_id, gradebook.id]); if (!schemes.length) return res.status(400).json({ message: 'The selected grading scheme does not belong to this gradebook.' }); }
+    const seen = new Set();
+    for (const category of categories) for (const item of (category.items || [])) {
+      const componentId = Number(item.component_id); if (!componentMap.has(componentId) || !assessmentIds.has(Number(item.assessment_id)) || componentMap.get(componentId) !== Number(item.assessment_id)) return res.status(400).json({ message: 'Each mapped component must belong to an active assessment in this gradebook.' });
+      if (seen.has(componentId)) return res.status(400).json({ message: 'A component cannot be mapped more than once.' }); seen.add(componentId);
+      if (Number(item.weight || 0) <= 0) return res.status(400).json({ message: 'Mapped component weights must be greater than zero.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [existing] = await connection.query('SELECT id FROM alamatak_final_grade_configs WHERE gradebook_id = ? FOR UPDATE', [gradebook.id]);
+      let configId;
+      if (existing.length) { configId = existing[0].id; await connection.query('UPDATE alamatak_final_grade_configs SET scheme_id = ?, status = \'draft\', finalized_by = NULL, finalized_at = NULL WHERE id = ?', [scheme_id || null, configId]); await connection.query('DELETE FROM alamatak_final_grade_categories WHERE config_id = ?', [configId]); }
+      else { const [created] = await connection.query('INSERT INTO alamatak_final_grade_configs (gradebook_id, scheme_id, status) VALUES (?, ?, \'draft\')', [gradebook.id, scheme_id || null]); configId = created.insertId; }
+      for (let categoryIndex = 0; categoryIndex < categories.length; categoryIndex += 1) {
+        const category = categories[categoryIndex]; const [createdCategory] = await connection.query('INSERT INTO alamatak_final_grade_categories (config_id, name, weight, calculation_method, sort_order) VALUES (?, ?, ?, ?, ?)', [configId, String(category.name).trim(), Number(category.weight), category.calculation_method || 'weighted_average', categoryIndex]);
+        for (const item of category.items || []) await connection.query('INSERT INTO alamatak_final_grade_items (category_id, assessment_id, component_id, weight) VALUES (?, ?, ?, ?)', [createdCategory.insertId, item.assessment_id, item.component_id, Number(item.weight || 1)]);
+      }
+      await connection.commit();
+    } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+    res.json(await loadFinalGradeView(req, gradebook.id));
+  } catch (error) { console.error('3alamatak final configuration error:', error); res.status(error.status || 500).json({ message: error.message || 'Failed to save final-grade configuration.' }); }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/final-grades/finalize', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const view = await loadFinalGradeView(req, req.params.id); if (!view) return res.status(404).json({ message: 'Gradebook not found.' });
+    if (!view.readiness.valid) return res.status(409).json({ message: 'Final-grade configuration is not ready.', readiness: view.readiness });
+    await db.query("UPDATE alamatak_final_grade_configs SET status = 'finalized', finalized_by = ?, finalized_at = CURRENT_TIMESTAMP WHERE gradebook_id = ?", [req.user.id, view.gradebook.id]);
+    res.json(await loadFinalGradeView(req, view.gradebook.id));
+  } catch (error) { res.status(500).json({ message: 'Finalization failed.' }); }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/final-grades/export', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const view = await loadFinalGradeView(req, req.params.id); if (!view) return res.status(404).json({ message: 'Gradebook not found.' });
+    const rows = [['Student ID', 'Student Name', ...((view.config?.categories || []).map((category) => `${category.name} %`)), 'Overall %', 'Final Grade', 'Status', 'Missing', 'Absent']];
+    view.results.forEach((result) => rows.push([result.student_id, result.display_name, ...result.categories.map((category) => category.percent == null ? '' : category.percent.toFixed(2)), result.overall_percent == null ? '' : result.overall_percent.toFixed(2), result.final_grade || '', result.status, result.missing_assessments, result.absent_assessments]));
+    const csv = rows.map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    res.type('text/csv').set('Content-Disposition', `attachment; filename="${String(view.gradebook.title).replace(/[^\w-]+/g, '_')}_Final_Grades.csv"`).send(csv);
+  } catch (error) { res.status(500).json({ message: 'Final-grade export failed.' }); }
+});
+
 app.get('/api/3alamatak/gradebooks/:id/analytics', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   try {
     const gradebook = await getAlamatakGradebook(req, req.params.id);
@@ -1521,6 +1613,15 @@ app.get('/api/3alamatak/gradebooks/:id/export', verifyToken, requireActiveTeache
       }
     }
     const [historicalRecords] = await db.query('SELECT * FROM alamatak_historical_records WHERE gradebook_id = ?', [gradebook.id]);
+    const [finalConfigs] = await db.query('SELECT * FROM alamatak_final_grade_configs WHERE gradebook_id = ?', [gradebook.id]);
+    let finalCategories = [];
+    let finalItems = [];
+    if (finalConfigs.length) {
+      const configIds = finalConfigs.map((config) => config.id);
+      [finalCategories] = await db.query('SELECT * FROM alamatak_final_grade_categories WHERE config_id IN (?) ORDER BY sort_order, id', [configIds]);
+      const categoryIds = finalCategories.map((category) => category.id);
+      if (categoryIds.length) [finalItems] = await db.query('SELECT * FROM alamatak_final_grade_items WHERE category_id IN (?)', [categoryIds]);
+    }
     res.json({
       version: 1,
       exported_at: new Date().toISOString(),
@@ -1532,7 +1633,10 @@ app.get('/api/3alamatak/gradebooks/:id/export', verifyToken, requireActiveTeache
       schemes,
       scheme_components: schemeComponents,
       thresholds,
-      historical_records: historicalRecords
+      historical_records: historicalRecords,
+      final_grade_configs: finalConfigs,
+      final_grade_categories: finalCategories,
+      final_grade_items: finalItems
     });
   } catch (error) {
     console.error('3alamatak export error:', error);
@@ -1651,6 +1755,30 @@ app.delete('/api/3alamatak/gradebooks/:id/schemes/:schemeId', verifyToken, requi
     console.error('3alamatak scheme delete error:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
+});
+
+app.put('/api/3alamatak/gradebooks/:id/schemes/:schemeId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const { name, components = {}, is_fallback = false } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ message: 'A scheme name is required.' });
+  const validation = validateThresholdScheme({ components });
+  if (!validation.valid) return res.status(400).json({ message: validation.errors.join(' ') });
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [owned] = await db.query('SELECT id FROM alamatak_grading_schemes WHERE id = ? AND gradebook_id = ?', [req.params.schemeId, gradebook.id]);
+    if (!owned.length) return res.status(404).json({ message: 'Grading scheme not found.' });
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query('UPDATE alamatak_grading_schemes SET name = ?, is_fallback = ? WHERE id = ?', [name.trim(), Boolean(is_fallback), req.params.schemeId]);
+      await connection.query('DELETE FROM alamatak_grading_components WHERE scheme_id = ?', [req.params.schemeId]);
+      for (const [key, component] of Object.entries(components)) {
+        const [created] = await connection.query('INSERT INTO alamatak_grading_components (scheme_id, component_key, label, maximum_score) VALUES (?, ?, ?, ?)', [req.params.schemeId, key, component.label || key, component.maximum_score == null ? null : Number(component.maximum_score)]);
+        for (const [gradeLabel, minimum] of Object.entries(component.thresholds || {})) await connection.query('INSERT INTO alamatak_grade_thresholds (grading_component_id, grade_label, minimum_score) VALUES (?, ?, ?)', [created.insertId, gradeLabel, Number(minimum)]);
+      }
+      await connection.commit();
+    } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+    res.json({ id: Number(req.params.schemeId), message: 'Grading scheme updated.' });
+  } catch (error) { console.error('3alamatak scheme update error:', error); res.status(500).json({ message: 'Internal server error.' }); }
 });
 
 app.get('/api/3alamatak/gradebooks/:id/historical-records', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {

@@ -402,6 +402,28 @@ async function runMigrations() {
       FOREIGN KEY (destination_student_id) REFERENCES alamatak_students(id) ON DELETE SET NULL,
       INDEX idx_alamatak_merge_gradebook (gradebook_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS alamatak_final_grade_configs (
+      id INT AUTO_INCREMENT PRIMARY KEY, gradebook_id INT NOT NULL UNIQUE, scheme_id INT NULL,
+      status ENUM('draft','finalized') NOT NULL DEFAULT 'draft', finalized_by INT NULL,
+      finalized_at TIMESTAMP NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (gradebook_id) REFERENCES alamatak_gradebooks(id) ON DELETE CASCADE,
+      FOREIGN KEY (scheme_id) REFERENCES alamatak_grading_schemes(id) ON DELETE SET NULL,
+      FOREIGN KEY (finalized_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS alamatak_final_grade_categories (
+      id INT AUTO_INCREMENT PRIMARY KEY, config_id INT NOT NULL, name VARCHAR(255) NOT NULL,
+      weight DECIMAL(8,3) NOT NULL DEFAULT 0, calculation_method VARCHAR(32) NOT NULL DEFAULT 'weighted_average',
+      sort_order INT NOT NULL DEFAULT 0, FOREIGN KEY (config_id) REFERENCES alamatak_final_grade_configs(id) ON DELETE CASCADE,
+      INDEX idx_alamatak_final_categories_config (config_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS alamatak_final_grade_items (
+      id INT AUTO_INCREMENT PRIMARY KEY, category_id INT NOT NULL, assessment_id INT NOT NULL, component_id INT NOT NULL,
+      weight DECIMAL(8,3) NOT NULL DEFAULT 1, FOREIGN KEY (category_id) REFERENCES alamatak_final_grade_categories(id) ON DELETE CASCADE,
+      FOREIGN KEY (assessment_id) REFERENCES alamatak_assessments(id) ON DELETE CASCADE,
+      FOREIGN KEY (component_id) REFERENCES alamatak_assessment_components(id) ON DELETE CASCADE,
+      UNIQUE KEY uq_alamatak_final_item (category_id, component_id), INDEX idx_alamatak_final_items_assessment (assessment_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     console.log('✔ 3alamatak tables verified.');
 
     console.log('\n🎉 All migrations completed successfully! Database is up to date.');

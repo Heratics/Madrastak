@@ -84,6 +84,7 @@ export default function ThreeAlamatakPage() {
   const [editingAssessment, setEditingAssessment] = useState(null);
   const [editingRecord, setEditingRecord] = useState(null);
   const [showSchemeForm, setShowSchemeForm] = useState(false);
+  const [editingScheme, setEditingScheme] = useState(null);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [importPreview, setImportPreview] = useState(null);
   const [studentResolutions, setStudentResolutions] = useState({});
@@ -296,6 +297,10 @@ export default function ThreeAlamatakPage() {
       setShowSchemeForm(false);
       await loadWorkspace();
     }, 'Grading scheme created.');
+  };
+
+  const updateScheme = async (payload) => {
+    await runAction(async () => { await threeAlamatakApi.updateScheme(selectedId, editingScheme.id, payload); setEditingScheme(null); await loadWorkspace(); }, 'Grading scheme updated.');
   };
 
   const deleteScheme = async (schemeId) => {
@@ -650,6 +655,7 @@ export default function ThreeAlamatakPage() {
               onEditAssessment={(assessment) => { setEditingAssessment(assessment); setShowAssessmentForm(true); }}
               onDeleteAssessment={deleteAssessment}
               onAddScheme={() => setShowSchemeForm(true)}
+              onEditScheme={setEditingScheme}
               onDeleteScheme={deleteScheme}
               onAssessmentChange={(id) => { setActiveAssessmentId(id); setMarks({}); }}
               onSaveMarks={() => runAction(async () => { await threeAlamatakApi.saveMarks(activeAssessment.id, Object.values(marks)); await loadWorkspace(); }, 'Marks saved to Aiven.')}
@@ -668,6 +674,7 @@ export default function ThreeAlamatakPage() {
       {showAssessmentForm && selectedId && <AssessmentForm assessment={editingAssessment} onCancel={() => { setShowAssessmentForm(false); setEditingAssessment(null); }} onSubmit={editingAssessment ? saveAssessment : createAssessment} />}
       {editingRecord && <RecordForm record={editingRecord} onCancel={() => setEditingRecord(null)} onSubmit={saveRecord} />}
       {showSchemeForm && selectedId && <SchemeForm onCancel={() => setShowSchemeForm(false)} onSubmit={createScheme} />}
+      {editingScheme && selectedId && <SchemeForm scheme={editingScheme} onCancel={() => setEditingScheme(null)} onSubmit={updateScheme} />}
       {showPrintModal && gradebook && (
         <PrintReportModal
           gradebook={gradebook}
@@ -790,6 +797,7 @@ function WorkspaceView({
   onEditAssessment,
   onDeleteAssessment,
   onAddScheme,
+  onEditScheme,
   onDeleteScheme,
   onAssessmentChange,
   onSaveMarks,
@@ -805,6 +813,7 @@ function WorkspaceView({
           ['markbook', 'Markbook'],
           ['students', 'Students'],
           ['assessments', 'Assessments'],
+          ['final-grades', 'Final Grades'],
           ['schemes', 'Grading Schemes'],
           ['records', 'Records & History'],
           ['imports', 'Import History'],
@@ -854,6 +863,7 @@ function WorkspaceView({
           />
         </div>
       )}
+      {tab === 'final-grades' && <FinalGradesTab gradebookId={gradebookId} assessments={assessments} schemes={schemes} />}
       {tab === 'markbook' && (
         <Markbook
           students={students}
@@ -866,7 +876,7 @@ function WorkspaceView({
         />
       )}
       {tab === 'schemes' && (
-        <SchemesTab schemes={schemes} onAddScheme={onAddScheme} onDeleteScheme={onDeleteScheme} />
+        <SchemesTab schemes={schemes} onAddScheme={onAddScheme} onEditScheme={onEditScheme} onDeleteScheme={onDeleteScheme} />
       )}
       {tab === 'records' && (
         <RecordsTab records={historicalRecords} onEdit={onEditRecord} onDelete={onDeleteRecord} />
@@ -875,6 +885,35 @@ function WorkspaceView({
       {tab === 'analytics' && <Analytics analytics={analytics} students={students} />}
     </div>
   );
+}
+
+function FinalGradesTab({ gradebookId, assessments, schemes }) {
+  const [data, setData] = useState(null); const [categories, setCategories] = useState([]); const [schemeId, setSchemeId] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const components = assessments.flatMap((assessment) => (assessment.components || []).map((component) => ({ ...component, assessment_id: assessment.id, assessment_title: assessment.title })));
+  const toForm = (view) => {
+    setData(view); setSchemeId(view.config?.scheme_id ? String(view.config.scheme_id) : '');
+    if (view.config?.categories?.length) setCategories(view.config.categories.map((category) => ({ ...category, items: (view.config.items || []).filter((item) => item.category_id === category.id).map((item) => ({ ...item })) })));
+    else setCategories([{ name: 'Overall', weight: 100, calculation_method: 'weighted_average', items: components.map((component) => ({ assessment_id: component.assessment_id, component_id: component.id, weight: 1 })) }]);
+  };
+  useEffect(() => { threeAlamatakApi.getFinalGrades(gradebookId).then(toForm).catch((e) => setError(e.message)); }, [gradebookId]);
+  const updateCategory = (index, key, value) => setCategories((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
+  const toggleComponent = (categoryIndex, component) => setCategories((items) => items.map((category, index) => {
+    if (index !== categoryIndex) return category;
+    const exists = category.items.some((item) => Number(item.component_id) === Number(component.id));
+    return { ...category, items: exists ? category.items.filter((item) => Number(item.component_id) !== Number(component.id)) : [...category.items, { assessment_id: component.assessment_id, component_id: component.id, weight: 1 }] };
+  }));
+  const save = async () => { setBusy(true); try { const next = await threeAlamatakApi.saveFinalGradeConfig(gradebookId, { scheme_id: schemeId || null, categories: categories.map((category) => ({ name: category.name, weight: Number(category.weight), calculation_method: category.calculation_method || 'weighted_average', items: category.items.map((item) => ({ assessment_id: item.assessment_id, component_id: item.component_id, weight: Number(item.weight || 1) })) })) }); toForm(next); setError(''); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  const finalize = async () => { if (!window.confirm('Finalize these grades? Marks or configuration changes will make this finalization stale.')) return; setBusy(true); try { toForm(await threeAlamatakApi.finalizeFinalGrades(gradebookId)); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  const exportGrades = async () => { try { const blob = await threeAlamatakApi.exportFinalGrades(gradebookId); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'Final_Grades.csv'; link.click(); URL.revokeObjectURL(url); } catch (e) { setError(e.message); } };
+  if (!data) return <div className="p-5 text-sm text-slate-500">Loading final-grade workspace…</div>;
+  const readiness = data.readiness || {}; const stateLabel = readiness.state === 'READY' ? 'Ready' : readiness.state === 'READY_WITH_WARNINGS' ? 'Ready with warnings' : 'Not configured / incomplete';
+  return <div className="space-y-5 p-5">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">Final Grades</h3><p className="text-xs text-slate-500">Backend-calculated, gradebook-scoped results. Stored marks remain unchanged.</p></div><div className="flex gap-2"><button type="button" onClick={() => window.print()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold">Print</button><button type="button" onClick={exportGrades} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold">Export CSV</button><button type="button" disabled={busy || !readiness.valid} onClick={finalize} className="rounded-xl bg-teal-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Finalize</button></div></div>
+    <div className={`rounded-xl border p-4 ${readiness.valid ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}><p className="font-black">Configuration: {stateLabel}{data.finalized_stale ? ' · Previous finalization is stale' : ''}</p><p className="mt-1 text-xs">Ready: {readiness.ready_students || 0} · Incomplete: {readiness.incomplete_students || 0} · Absent: {readiness.absent_students || 0}</p>{[...(readiness.errors || []), ...(readiness.warnings || [])].map((message, index) => <p key={`${message}-${index}`} className="mt-1 text-xs">⚠ {message}</p>)}</div>
+    <section className="rounded-xl border border-slate-200 p-4"><div className="flex items-center justify-between"><h4 className="font-black">Configuration</h4><button type="button" onClick={() => setCategories([...categories, { name: 'New Category', weight: 0, items: [] }])} className="rounded-lg border border-teal-200 px-3 py-1.5 text-xs font-bold text-teal-700">Add category</button></div><label className="mt-3 block text-xs font-bold">Threshold scheme<select value={schemeId} onChange={(event) => setSchemeId(event.target.value)} className="mt-1 block min-h-9 w-full rounded-lg border border-slate-200 px-2"><option value="">Select a scheme</option>{schemes.map((scheme) => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}</select></label>{categories.map((category, index) => <div key={`${category.id || 'new'}-${index}`} className="mt-4 rounded-lg bg-slate-50 p-3"><div className="grid gap-2 sm:grid-cols-[1fr_8rem_auto]"><input value={category.name} onChange={(event) => updateCategory(index, 'name', event.target.value)} className="rounded border border-slate-200 px-2 py-1 text-sm" /><input type="number" min="0" max="100" value={category.weight} onChange={(event) => updateCategory(index, 'weight', event.target.value)} className="rounded border border-slate-200 px-2 py-1 text-sm" /><button type="button" onClick={() => setCategories(categories.filter((_, itemIndex) => itemIndex !== index))} className="text-xs font-bold text-red-700">Remove</button></div><p className="mt-2 text-[11px] font-bold uppercase text-slate-500">Mapped assessment components</p><div className="mt-1 grid gap-1 sm:grid-cols-2">{components.map((component) => <label key={component.id} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={category.items.some((item) => Number(item.component_id) === Number(component.id))} onChange={() => toggleComponent(index, component)} />{component.assessment_title} · {component.name} ({component.maximum_score})</label>)}</div></div>)}<button type="button" disabled={busy} onClick={save} className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">Save configuration</button></section>
+    <section className="rounded-xl border border-slate-200 p-4"><h4 className="mb-3 font-black">Student final-grade results</h4><SimpleTable headers={['Student', 'Categories', 'Overall', 'Grade', 'Status', 'Missing', 'Absent']} rows={(data.results || []).map((result) => [result.display_name, result.categories.map((category) => `${category.name}: ${category.percent == null ? '—' : `${category.percent.toFixed(1)}%`}`).join(' · '), result.overall_percent == null ? '—' : `${result.overall_percent.toFixed(1)}%`, result.final_grade || '—', result.status, result.missing_assessments, result.absent_assessments])} /></section>
+    {error && <p className="text-sm font-bold text-red-700">{error}</p>}
+  </div>;
 }
 
 function Markbook({ students, assessments, activeAssessment, marks, setMarks, onAssessmentChange, onSave }) {
@@ -970,7 +1009,7 @@ function Markbook({ students, assessments, activeAssessment, marks, setMarks, on
   );
 }
 
-function SchemesTab({ schemes, onAddScheme, onDeleteScheme }) {
+function SchemesTab({ schemes, onAddScheme, onEditScheme, onDeleteScheme }) {
   return (
     <div className="p-5">
       <div className="mb-4 flex items-center justify-between">
@@ -998,13 +1037,13 @@ function SchemesTab({ schemes, onAddScheme, onDeleteScheme }) {
                   <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700">Fallback</span>
                 ) : null}
               </div>
-              <button
+              <span className="flex gap-3"><button type="button" onClick={() => onEditScheme?.(scheme)} className="text-xs font-bold text-teal-700">Edit</button><button
                 type="button"
                 onClick={() => onDeleteScheme(scheme.id)}
                 className="text-xs font-bold text-red-600 hover:text-red-800"
               >
                 Delete
-              </button>
+              </button></span>
             </div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -1854,9 +1893,9 @@ function RecordForm({ record, onCancel, onSubmit }) {
   );
 }
 
-function SchemeForm({ onCancel, onSubmit }) {
-  const [name, setName] = useState('IGCSE Standard Scheme');
-  const [components, setComponents] = useState({
+function SchemeForm({ scheme, onCancel, onSubmit }) {
+  const [name, setName] = useState(scheme?.name || 'IGCSE Standard Scheme');
+  const [components, setComponents] = useState(scheme?.components || {
     Overall: {
       label: 'Overall Grade',
       maximum_score: 100,
@@ -1865,7 +1904,7 @@ function SchemeForm({ onCancel, onSubmit }) {
   });
 
   return (
-    <Modal title="New Grading Scheme" onCancel={onCancel}>
+    <Modal title={scheme ? 'Edit Grading Scheme' : 'New Grading Scheme'} onCancel={onCancel}>
       <Field label="Scheme Name" value={name} onChange={setName} placeholder="Cambridge 0500 Scheme" />
       <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
         <p className="text-xs font-bold text-slate-700">Threshold Boundaries for Overall (0 - 100)</p>
@@ -1894,7 +1933,7 @@ function SchemeForm({ onCancel, onSubmit }) {
           ))}
         </div>
       </div>
-      <FormActions onCancel={onCancel} onSubmit={() => onSubmit({ name, is_fallback: false, components })} label="Create Scheme" />
+      <FormActions onCancel={onCancel} onSubmit={() => onSubmit({ name, is_fallback: Boolean(scheme?.is_fallback), components })} label={scheme ? 'Save Scheme' : 'Create Scheme'} />
     </Modal>
   );
 }

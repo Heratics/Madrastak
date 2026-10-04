@@ -44,6 +44,15 @@ export const threeAlamatakApi = {
   getMarks: (id) => request(`/api/3alamatak/assessments/${id}/marks`),
   saveMarks: (id, marks) => request(`/api/3alamatak/assessments/${id}/marks`, { method: 'PUT', body: JSON.stringify({ marks }) }),
   getAnalytics: (id) => request(`/api/3alamatak/gradebooks/${id}/analytics`),
+  getFinalGrades: (id) => request(`/api/3alamatak/gradebooks/${id}/final-grades`),
+  saveFinalGradeConfig: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/final-grades/config`, { method: 'PUT', body: JSON.stringify(payload) }),
+  finalizeFinalGrades: (id) => request(`/api/3alamatak/gradebooks/${id}/final-grades/finalize`, { method: 'POST' }),
+  exportFinalGrades: async (id) => {
+    const token = getValidToken();
+    const response = await fetch(`${API_URL}/api/3alamatak/gradebooks/${id}/final-grades/export`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.message || 'Final-grade export failed.'); }
+    return response.blob();
+  },
   exportGradebook: (id) => request(`/api/3alamatak/gradebooks/${id}/export`),
   analyzeWorkbook: (id, file) => {
     const formData = new FormData();
@@ -59,6 +68,7 @@ export const threeAlamatakApi = {
   },
   listSchemes: (id) => request(`/api/3alamatak/gradebooks/${id}/schemes`),
   createScheme: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/schemes`, { method: 'POST', body: JSON.stringify(payload) }),
+  updateScheme: (gradebookId, schemeId, payload) => request(`/api/3alamatak/gradebooks/${gradebookId}/schemes/${schemeId}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteScheme: (gradebookId, schemeId) => request(`/api/3alamatak/gradebooks/${gradebookId}/schemes/${schemeId}`, { method: 'DELETE' }),
   listHistoricalRecords: (id, params = {}) => {
     const q = new URLSearchParams(params).toString();

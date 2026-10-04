@@ -306,6 +306,22 @@ test('3alamatak Multi-Teacher Isolation & Import Compatibility Suite', async (t)
       assert.ok(Array.isArray(analytics.needs_attention));
     });
 
+    await t.test('Final-grade configuration is authoritative and owner-scoped', async () => {
+      const headersB = { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenB}` };
+      const forbidden = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/final-grades`, { headers: { Authorization: `Bearer ${tokenA}` } });
+      assert.strictEqual(forbidden.status, 404);
+      const assessmentList = await (await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/assessments`, { headers: headersB })).json();
+      const component = assessmentList.find((assessment) => assessment.id === assessmentBId).components[0];
+      const schemeResponse = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/schemes`, { method: 'POST', headers: headersB, body: JSON.stringify({ name: `Final Test Scheme ${Date.now()}`, components: { Overall: { label: 'Overall', maximum_score: 100, thresholds: { A: 80, U: 0 } } } }) });
+      assert.strictEqual(schemeResponse.status, 201);
+      const schemes = await (await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/schemes`, { headers: headersB })).json();
+      const configResponse = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/final-grades/config`, { method: 'PUT', headers: headersB, body: JSON.stringify({ scheme_id: schemes[0].id, categories: [{ name: 'Overall', weight: 100, items: [{ assessment_id: assessmentBId, component_id: component.id, weight: 1 }] }] }) });
+      assert.strictEqual(configResponse.status, 200);
+      const finalView = await configResponse.json();
+      assert.equal(finalView.readiness.valid, true);
+      assert.ok(finalView.results.length >= 1);
+    });
+
     await t.test('Gradebook lifecycle supports edit, archive filtering, restore, and permanent deletion', async () => {
       const headersA = { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` };
       const editResponse = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookAId}`, {

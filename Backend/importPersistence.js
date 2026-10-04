@@ -57,8 +57,8 @@ async function persistImportPackage(connection, { gradebookId, uploadedBy, paylo
   const sourceHash = payload.metadata?.source_hash;
   if (sourceHash) {
     const [priorImports] = await connection.query(
-      'SELECT id, metadata FROM alamatak_imports WHERE gradebook_id = ? AND original_filename = ? ORDER BY id DESC',
-      [gradebookId, String(payload.original_filename).slice(0, 512)]
+      'SELECT id, metadata FROM alamatak_imports WHERE gradebook_id = ? ORDER BY id DESC',
+      [gradebookId]
     );
     const prior = priorImports.find((item) => {
       try {
@@ -71,11 +71,11 @@ async function persistImportPackage(connection, { gradebookId, uploadedBy, paylo
   const students = buildUniqueStudents(payload.students);
   const [importResult] = await connection.query(
     `INSERT INTO alamatak_imports
-     (gradebook_id, uploaded_by, original_filename, academic_year, detected_class, detected_subject, workbook_type, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     (gradebook_id, uploaded_by, original_filename, academic_year, detected_class, detected_subject, workbook_type, metadata, source_fingerprint, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
     [gradebookId, uploadedBy, String(payload.original_filename).slice(0, 512), payload.academic_year || null,
       payload.detected_class || null, payload.detected_subject || null, payload.workbook_type || null,
-      JSON.stringify({ ...(payload.metadata || {}), diagnostics: payload.diagnostics || {} })]
+      JSON.stringify({ ...(payload.metadata || {}), diagnostics: payload.diagnostics || {} }), sourceHash || null]
   );
   const importId = importResult.insertId;
 
@@ -95,8 +95,8 @@ async function persistImportPackage(connection, { gradebookId, uploadedBy, paylo
   const existingByName = new Map(existingRows.map((row) => [normalizeImportedName(row.display_name), row]));
   const newStudents = students.filter((student) => !((student.external_student_id && existingByExternalId.get(student.external_student_id)) || existingByName.get(normalizeImportedName(student.display_name))));
   await insertRows(connection, 'INSERT INTO alamatak_students',
-    ['gradebook_id', 'linked_user_id', 'external_student_id', 'first_name', 'last_name', 'display_name', 'email', 'notes'],
-    newStudents.map((student) => [gradebookId, null, student.external_student_id, student.first_name, student.last_name, student.display_name, student.email || null, student.notes || null]));
+    ['gradebook_id', 'linked_user_id', 'external_student_id', 'first_name', 'last_name', 'display_name', 'email', 'notes', 'source_import_id'],
+    newStudents.map((student) => [gradebookId, null, student.external_student_id, student.first_name, student.last_name, student.display_name, student.email || null, student.notes || null, importId]));
   const [allStudents] = await connection.query('SELECT id, external_student_id, display_name FROM alamatak_students WHERE gradebook_id = ?', [gradebookId]);
   const studentMap = new Map();
   for (const student of students) {
@@ -127,6 +127,7 @@ async function persistImportPackage(connection, { gradebookId, uploadedBy, paylo
       const studentId = studentMap.get(mark.student_key);
       const componentId = componentIds[componentOffset + Number(mark.component_index)];
       if (studentId && componentId) marks.push([componentId, studentId, mark.score ?? null, mark.mark_status || null, mark.comment || null, Boolean(mark.follow_up_required), JSON.stringify({
+        source_import_id: importId,
         source_sheet: mark.source_sheet || null,
         source_row: mark.source_row || null,
         original_name: mark.display_name || mark.student_key || null,

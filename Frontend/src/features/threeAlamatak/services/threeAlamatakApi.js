@@ -31,6 +31,12 @@ export const threeAlamatakApi = {
   createStudent: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/students`, { method: 'POST', body: JSON.stringify(payload) }),
   updateStudent: (gradebookId, studentId, payload) => request(`/api/3alamatak/gradebooks/${gradebookId}/students/${studentId}`, { method: 'PUT', body: JSON.stringify(payload) }),
   archiveStudent: (gradebookId, studentId) => request(`/api/3alamatak/gradebooks/${gradebookId}/students/${studentId}`, { method: 'DELETE' }),
+  listStudentAliases: (gradebookId, studentId) => request(`/api/3alamatak/gradebooks/${gradebookId}/students/${studentId}/aliases`),
+  addStudentAlias: (gradebookId, studentId, alias_name) => request(`/api/3alamatak/gradebooks/${gradebookId}/students/${studentId}/aliases`, { method: 'POST', body: JSON.stringify({ alias_name }) }),
+  removeStudentAlias: (gradebookId, studentId, aliasId) => request(`/api/3alamatak/gradebooks/${gradebookId}/students/${studentId}/aliases/${aliasId}`, { method: 'DELETE' }),
+  listDuplicateStudents: (gradebookId) => request(`/api/3alamatak/gradebooks/${gradebookId}/duplicate-students`),
+  previewStudentMerge: (gradebookId, payload) => request(`/api/3alamatak/gradebooks/${gradebookId}/student-merge/preview`, { method: 'POST', body: JSON.stringify(payload) }),
+  mergeStudents: (gradebookId, payload) => request(`/api/3alamatak/gradebooks/${gradebookId}/student-merge`, { method: 'POST', body: JSON.stringify(payload) }),
   listAssessments: (id) => request(`/api/3alamatak/gradebooks/${id}/assessments`),
   createAssessment: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/assessments`, { method: 'POST', body: JSON.stringify(payload) }),
   updateAssessment: (id, payload) => request(`/api/3alamatak/assessments/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
@@ -58,6 +64,9 @@ export const threeAlamatakApi = {
     const q = new URLSearchParams(params).toString();
     return request(`/api/3alamatak/gradebooks/${id}/historical-records${q ? `?${q}` : ''}`);
   },
+  listImports: (id) => request(`/api/3alamatak/gradebooks/${id}/imports`),
+  getImport: (id, importId) => request(`/api/3alamatak/gradebooks/${id}/imports/${importId}`),
+  rollbackImport: (id, importId) => request(`/api/3alamatak/gradebooks/${id}/imports/${importId}/rollback`, { method: 'POST' }),
   updateHistoricalRecord: (id, payload) => request(`/api/3alamatak/historical-records/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteHistoricalRecord: (id) => request(`/api/3alamatak/historical-records/${id}`, { method: 'DELETE' }),
 };

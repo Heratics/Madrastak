@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS alamatak_students (
   email VARCHAR(255) NULL,
   status ENUM('active', 'inactive', 'archived') NOT NULL DEFAULT 'active',
   notes TEXT NULL,
+  source_import_id INT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (gradebook_id) REFERENCES alamatak_gradebooks(id) ON DELETE CASCADE,
@@ -170,11 +171,45 @@ CREATE TABLE IF NOT EXISTS alamatak_imports (
   detected_subject VARCHAR(100) NULL,
   workbook_type VARCHAR(64) NULL,
   metadata JSON NULL,
+  source_fingerprint CHAR(64) NULL,
+  status ENUM('completed', 'rolled_back', 'failed') NOT NULL DEFAULT 'completed',
+  completed_at TIMESTAMP NULL,
+  rolled_back_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (gradebook_id) REFERENCES alamatak_gradebooks(id) ON DELETE CASCADE,
   FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE RESTRICT,
   INDEX idx_alamatak_imports_gradebook (gradebook_id),
   INDEX idx_alamatak_imports_uploaded_by (uploaded_by)
+  ,UNIQUE KEY uq_alamatak_import_fingerprint (gradebook_id, source_fingerprint)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS alamatak_student_aliases (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  student_id INT NOT NULL,
+  alias_name VARCHAR(255) NOT NULL,
+  normalized_alias VARCHAR(255) NOT NULL,
+  source VARCHAR(64) NOT NULL DEFAULT 'teacher',
+  created_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (student_id) REFERENCES alamatak_students(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE KEY uq_alamatak_student_alias (student_id, normalized_alias),
+  INDEX idx_alamatak_alias_normalized (normalized_alias)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS alamatak_student_merge_audits (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  actor_user_id INT NOT NULL,
+  gradebook_id INT NOT NULL,
+  source_student_id INT NULL,
+  destination_student_id INT NULL,
+  summary JSON NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (gradebook_id) REFERENCES alamatak_gradebooks(id) ON DELETE CASCADE,
+  FOREIGN KEY (source_student_id) REFERENCES alamatak_students(id) ON DELETE SET NULL,
+  FOREIGN KEY (destination_student_id) REFERENCES alamatak_students(id) ON DELETE SET NULL,
+  INDEX idx_alamatak_merge_gradebook (gradebook_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS alamatak_import_sheets (

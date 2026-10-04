@@ -1018,6 +1018,126 @@ app.delete('/api/3alamatak/gradebooks/:id/students/:studentId', verifyToken, req
   }
 });
 
+async function getOwnedAlamatakStudent(req, gradebookId, studentId) {
+  const gradebook = await getAlamatakGradebook(req, gradebookId);
+  if (!gradebook) return null;
+  const [rows] = await db.query('SELECT * FROM alamatak_students WHERE id = ? AND gradebook_id = ?', [studentId, gradebook.id]);
+  return rows[0] || null;
+}
+
+app.get('/api/3alamatak/gradebooks/:id/students/:studentId/aliases', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const student = await getOwnedAlamatakStudent(req, req.params.id, req.params.studentId);
+    if (!student) return res.status(404).json({ message: 'Student not found.' });
+    const [aliases] = await db.query('SELECT id, student_id, alias_name, normalized_alias, source, created_by, created_at FROM alamatak_student_aliases WHERE student_id = ? ORDER BY alias_name', [student.id]);
+    res.json(aliases);
+  } catch (error) { res.status(500).json({ message: 'Internal server error.' }); }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/students/:studentId/aliases', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const aliasName = String(req.body?.alias_name || '').trim();
+  if (aliasName.length < 2 || aliasName.length > 255) return res.status(400).json({ message: 'Alias must be between 2 and 255 characters.' });
+  try {
+    const student = await getOwnedAlamatakStudent(req, req.params.id, req.params.studentId);
+    if (!student) return res.status(404).json({ message: 'Student not found.' });
+    const normalized = workbookParser.normalizeImportedName(aliasName);
+    if (!normalized || normalized === workbookParser.normalizeImportedName(student.display_name)) return res.status(400).json({ message: 'Alias must differ from the student name.' });
+    const [result] = await db.query('INSERT INTO alamatak_student_aliases (student_id, alias_name, normalized_alias, source, created_by) VALUES (?, ?, ?, \'teacher\', ?)', [student.id, aliasName, normalized, req.user.id]);
+    const [rows] = await db.query('SELECT id, student_id, alias_name, normalized_alias, source, created_by, created_at FROM alamatak_student_aliases WHERE id = ?', [result.insertId]);
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'That alias already exists for this student.' });
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.delete('/api/3alamatak/gradebooks/:id/students/:studentId/aliases/:aliasId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const student = await getOwnedAlamatakStudent(req, req.params.id, req.params.studentId);
+    if (!student) return res.status(404).json({ message: 'Student not found.' });
+    const [result] = await db.query('DELETE FROM alamatak_student_aliases WHERE id = ? AND student_id = ?', [req.params.aliasId, student.id]);
+    if (!result.affectedRows) return res.status(404).json({ message: 'Alias not found.' });
+    res.json({ message: 'Alias removed.' });
+  } catch (error) { res.status(500).json({ message: 'Internal server error.' }); }
+});
+
+async function duplicateCandidatesForGradebook(gradebookId) {
+  const [students] = await db.query(`SELECT s.*, COALESCE(JSON_ARRAYAGG(al.alias_name), JSON_ARRAY()) AS aliases
+    FROM alamatak_students s LEFT JOIN alamatak_student_aliases al ON al.student_id = s.id
+    WHERE s.gradebook_id = ? GROUP BY s.id ORDER BY s.display_name`, [gradebookId]);
+  const candidates = [];
+  for (let i = 0; i < students.length; i += 1) for (let j = i + 1; j < students.length; j += 1) {
+    const a = students[i]; const b = students[j]; const reasons = [];
+    if (a.external_student_id && b.external_student_id && String(a.external_student_id) === String(b.external_student_id)) reasons.push('same student ID');
+    if (workbookParser.normalizeImportedName(a.display_name) === workbookParser.normalizeImportedName(b.display_name)) reasons.push('same normalized name');
+    const aliasA = (a.aliases || []).map((x) => workbookParser.normalizeImportedName(x));
+    const aliasB = (b.aliases || []).map((x) => workbookParser.normalizeImportedName(x));
+    if (aliasA.includes(workbookParser.normalizeImportedName(b.display_name)) || aliasB.includes(workbookParser.normalizeImportedName(a.display_name))) reasons.push('alias match');
+    if (a.email && b.email && a.email.toLowerCase() === b.email.toLowerCase()) reasons.push('same email');
+    const similarity = workbookParser.importedNameScore(a.display_name, b.display_name);
+    if (similarity >= 0.92) reasons.push(`strong name similarity (${similarity.toFixed(2)})`);
+    if (!reasons.length) continue;
+    const [marks] = await db.query(`SELECT s.id, COUNT(m.id) AS count FROM alamatak_students s LEFT JOIN alamatak_marks m ON m.student_id = s.id WHERE s.id IN (?, ?) GROUP BY s.id`, [a.id, b.id]);
+    const [history] = await db.query('SELECT student_id, COUNT(*) AS count FROM alamatak_historical_records WHERE student_id IN (?, ?) GROUP BY student_id', [a.id, b.id]);
+    candidates.push({ student_a: { ...a, aliases: a.aliases || [] }, student_b: { ...b, aliases: b.aliases || [] }, reasons, marks: Object.fromEntries(marks.map((x) => [x.id, Number(x.count)])), historical_records: Object.fromEntries(history.map((x) => [x.student_id, Number(x.count)])) });
+  }
+  return candidates;
+}
+
+app.get('/api/3alamatak/gradebooks/:id/duplicate-students', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try { const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' }); res.json(await duplicateCandidatesForGradebook(gradebook.id)); }
+  catch (error) { res.status(500).json({ message: 'Internal server error.' }); }
+});
+
+async function mergePreview(req, gradebookId, sourceId, destinationId) {
+  const gradebook = await getAlamatakGradebook(req, gradebookId);
+  if (!gradebook) return null;
+  const [students] = await db.query('SELECT * FROM alamatak_students WHERE gradebook_id = ? AND id IN (?, ?)', [gradebook.id, sourceId, destinationId]);
+  const source = students.find((s) => Number(s.id) === Number(sourceId)); const destination = students.find((s) => Number(s.id) === Number(destinationId));
+  if (!source || !destination || source.id === destination.id) return { invalid: true };
+  const [sourceMarks] = await db.query(`SELECT m.id, m.component_id, m.score, m.mark_status, m.comment, m.follow_up_required, m.provenance FROM alamatak_marks m WHERE m.student_id = ?`, [source.id]);
+  const [destinationMarks] = await db.query('SELECT component_id, score, mark_status, comment, follow_up_required FROM alamatak_marks WHERE student_id = ?', [destination.id]);
+  const destinationByComponent = new Map(destinationMarks.map((m) => [String(m.component_id), m]));
+  const conflicts = sourceMarks.filter((m) => destinationByComponent.has(String(m.component_id)) && JSON.stringify({ score: m.score, status: m.mark_status, comment: m.comment, follow: m.follow_up_required }) !== JSON.stringify({ score: destinationByComponent.get(String(m.component_id)).score, status: destinationByComponent.get(String(m.component_id)).mark_status, comment: destinationByComponent.get(String(m.component_id)).comment, follow: destinationByComponent.get(String(m.component_id)).follow_up_required }));
+  const [history] = await db.query('SELECT COUNT(*) AS count FROM alamatak_historical_records WHERE student_id = ?', [source.id]);
+  const [aliases] = await db.query('SELECT alias_name FROM alamatak_student_aliases WHERE student_id IN (?, ?)', [source.id, destination.id]);
+  return { source_student: source, destination_student: destination, source_marks: sourceMarks.length, destination_marks: destinationMarks.length, historical_records: Number(history[0].count), aliases: aliases.map((a) => a.alias_name), conflicts: conflicts.map((m) => ({ component_id: m.component_id, source: m, destination: destinationByComponent.get(String(m.component_id)) })) };
+}
+
+app.post('/api/3alamatak/gradebooks/:id/student-merge/preview', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try { const preview = await mergePreview(req, req.params.id, req.body?.source_student_id, req.body?.destination_student_id); if (!preview) return res.status(404).json({ message: 'Gradebook not found.' }); if (preview.invalid) return res.status(400).json({ message: 'Two different students in the same gradebook are required.' }); res.json(preview); }
+  catch (error) { res.status(500).json({ message: 'Internal server error.' }); }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/student-merge', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const sourceId = Number(req.body?.source_student_id); const destinationId = Number(req.body?.destination_student_id); const resolutions = req.body?.resolutions || {};
+  const connection = await db.getConnection();
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const preview = await mergePreview(req, gradebook.id, sourceId, destinationId); if (!preview || preview.invalid) return res.status(400).json({ message: 'Invalid merge students.' });
+    if (preview.conflicts.length && !preview.conflicts.every((c) => ['source', 'destination'].includes(resolutions[String(c.component_id)]))) return res.status(409).json({ message: 'Conflicting marks require explicit source or destination resolutions.', preview });
+    await connection.beginTransaction();
+    for (const conflict of preview.conflicts) {
+      if (resolutions[String(conflict.component_id)] === 'source') await connection.query('UPDATE alamatak_marks SET score = ?, mark_status = ?, comment = ?, follow_up_required = ?, provenance = ? WHERE component_id = ? AND student_id = ?', [conflict.source.score, conflict.source.mark_status, conflict.source.comment, conflict.source.follow_up_required, conflict.source.provenance, conflict.component_id, destinationId]);
+    }
+    await connection.query(`INSERT INTO alamatak_marks (component_id, student_id, score, mark_status, comment, follow_up_required, provenance)
+      SELECT source.component_id, ?, source.score, source.mark_status, source.comment, source.follow_up_required, source.provenance
+      FROM alamatak_marks source LEFT JOIN alamatak_marks destination ON destination.component_id = source.component_id AND destination.student_id = ?
+      WHERE source.student_id = ? AND destination.id IS NULL`, [destinationId, destinationId, sourceId]);
+    await connection.query('UPDATE alamatak_marks source JOIN alamatak_marks destination ON destination.component_id = source.component_id AND destination.student_id = ? SET destination.score = COALESCE(destination.score, source.score), destination.mark_status = COALESCE(destination.mark_status, source.mark_status), destination.comment = COALESCE(destination.comment, source.comment), destination.follow_up_required = destination.follow_up_required OR source.follow_up_required WHERE source.student_id = ?', [destinationId, sourceId]);
+    await connection.query('DELETE FROM alamatak_marks WHERE student_id = ?', [sourceId]);
+    await connection.query('UPDATE alamatak_historical_records SET student_id = ? WHERE student_id = ?', [destinationId, sourceId]);
+    const [sourceAliases] = await connection.query('SELECT alias_name, normalized_alias, source, created_by FROM alamatak_student_aliases WHERE student_id = ?', [sourceId]);
+    for (const alias of sourceAliases) await connection.query('INSERT IGNORE INTO alamatak_student_aliases (student_id, alias_name, normalized_alias, source, created_by) VALUES (?, ?, ?, ?, ?)', [destinationId, alias.alias_name, alias.normalized_alias, alias.source, alias.created_by]);
+    await connection.query('DELETE FROM alamatak_student_aliases WHERE student_id = ?', [sourceId]);
+    await connection.query('UPDATE alamatak_imports i JOIN alamatak_students s ON s.source_import_id = i.id SET i.metadata = JSON_SET(COALESCE(i.metadata, JSON_OBJECT()), \'$.merge_activity\', CURRENT_TIMESTAMP) WHERE s.id = ?', [destinationId]);
+    await connection.query('INSERT INTO alamatak_student_merge_audits (actor_user_id, gradebook_id, source_student_id, destination_student_id, summary) VALUES (?, ?, ?, ?, ?)', [req.user.id, gradebook.id, sourceId, destinationId, JSON.stringify({ source_marks: preview.source_marks, historical_records: preview.historical_records, conflicts: preview.conflicts.length })]);
+    await connection.query('DELETE FROM alamatak_students WHERE id = ? AND gradebook_id = ?', [sourceId, gradebook.id]);
+    await connection.commit(); res.json({ message: 'Students merged.', summary: preview });
+  } catch (error) { await connection.rollback(); if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'The merge would create a duplicate identity or alias.' }); res.status(500).json({ message: 'Merge failed and was rolled back.' }); }
+  finally { connection.release(); }
+});
+
 async function getOwnedAssessment(req, assessmentId) {
   const params = [assessmentId];
   const ownership = req.user.role === 'admin' ? '' : ' AND g.owner_user_id = ?';
@@ -1613,6 +1733,58 @@ app.delete('/api/3alamatak/historical-records/:id', verifyToken, requireActiveTe
   }
 });
 
+app.get('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [imports] = await db.query(`SELECT i.id, i.gradebook_id, i.uploaded_by, i.original_filename, i.academic_year, i.detected_class, i.detected_subject, i.workbook_type, i.metadata, i.source_fingerprint, i.status, i.completed_at, i.rolled_back_at, i.created_at,
+      (SELECT COUNT(*) FROM alamatak_import_sheets s WHERE s.import_id = i.id) AS worksheet_count,
+      (SELECT COUNT(*) FROM alamatak_students s WHERE s.source_import_id = i.id) AS created_students,
+      (SELECT COUNT(*) FROM alamatak_assessments a WHERE a.source_import_id = i.id) AS created_assessments,
+      (SELECT COUNT(*) FROM alamatak_historical_records h WHERE h.import_id = i.id) AS historical_records
+      FROM alamatak_imports i WHERE i.gradebook_id = ? ORDER BY i.created_at DESC`, [gradebook.id]);
+    res.json(imports);
+  } catch (error) { res.status(500).json({ message: 'Internal server error.' }); }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/imports/:importId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [imports] = await db.query('SELECT * FROM alamatak_imports WHERE id = ? AND gradebook_id = ?', [req.params.importId, gradebook.id]); if (!imports.length) return res.status(404).json({ message: 'Import not found.' });
+    const [sheets] = await db.query('SELECT * FROM alamatak_import_sheets WHERE import_id = ? ORDER BY id', [req.params.importId]);
+    res.json({ ...imports[0], sheets });
+  } catch (error) { res.status(500).json({ message: 'Internal server error.' }); }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/imports/:importId/rollback', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const connection = await db.getConnection();
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    await connection.beginTransaction();
+    const [imports] = await connection.query('SELECT * FROM alamatak_imports WHERE id = ? AND gradebook_id = ? FOR UPDATE', [req.params.importId, gradebook.id]);
+    if (!imports.length) return res.status(404).json({ message: 'Import not found.' });
+    const importRow = imports[0]; if (importRow.status === 'rolled_back') return res.status(409).json({ message: 'This import has already been rolled back.' });
+    const [assessments] = await connection.query(`SELECT a.id, a.title, a.updated_at, MAX(m.updated_at) AS latest_mark_update
+      FROM alamatak_assessments a LEFT JOIN alamatak_assessment_components c ON c.assessment_id = a.id LEFT JOIN alamatak_marks m ON m.component_id = c.id
+      WHERE a.gradebook_id = ? AND a.source_import_id = ? GROUP BY a.id`, [gradebook.id, importRow.id]);
+    const importedAt = new Date(importRow.completed_at || importRow.created_at).getTime() + 1000;
+    const unsafeAssessments = assessments.filter((a) => new Date(a.updated_at).getTime() > importedAt || (a.latest_mark_update && new Date(a.latest_mark_update).getTime() > importedAt));
+    if (unsafeAssessments.length) { await connection.rollback(); return res.status(409).json({ message: 'Rollback stopped because imported assessments were edited after the import.', unsafe_assessments: unsafeAssessments }); }
+    await connection.query('DELETE FROM alamatak_assessments WHERE gradebook_id = ? AND source_import_id = ?', [gradebook.id, importRow.id]);
+    const [students] = await connection.query('SELECT id FROM alamatak_students WHERE gradebook_id = ? AND source_import_id = ?', [gradebook.id, importRow.id]);
+    const removable = [];
+    for (const student of students) {
+      const [marks] = await connection.query('SELECT COUNT(*) AS count FROM alamatak_marks WHERE student_id = ?', [student.id]);
+      const [history] = await connection.query('SELECT COUNT(*) AS count FROM alamatak_historical_records WHERE student_id = ? AND (import_id IS NULL OR import_id <> ?)', [student.id, importRow.id]);
+      if (Number(marks[0].count) === 0 && Number(history[0].count) === 0) removable.push(student.id);
+    }
+    if (removable.length) await connection.query('DELETE FROM alamatak_students WHERE gradebook_id = ? AND id IN (?)', [gradebook.id, removable]);
+    await connection.query('DELETE FROM alamatak_historical_records WHERE gradebook_id = ? AND import_id = ?', [gradebook.id, importRow.id]);
+    await connection.query("UPDATE alamatak_imports SET status = 'rolled_back', rolled_back_at = CURRENT_TIMESTAMP WHERE id = ? AND gradebook_id = ?", [importRow.id, gradebook.id]);
+    await connection.commit(); res.json({ message: 'Import rolled back safely.', removed_assessments: assessments.length, removed_students: removable.length, preserved_students: students.length - removable.length });
+  } catch (error) { await connection.rollback(); res.status(500).json({ message: 'Rollback failed and was rolled back.' }); }
+  finally { connection.release(); }
+});
+
 app.post('/api/3alamatak/gradebooks/:id/imports/analyze', verifyToken, requireActiveTeacherOrAdmin, handleUpload, async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'An Excel or delimited text file is required for analysis.' });
@@ -1627,7 +1799,7 @@ app.post('/api/3alamatak/gradebooks/:id/imports/analyze', verifyToken, requireAc
       : [{ name: req.file.originalname.replace(/\.[^.]+$/, ''), rows: workbookParser.parseDelimited(req.file.buffer.toString('utf8')) }];
 
     const [existingStudents] = await db.query(
-      "SELECT id, external_student_id, display_name, first_name, last_name, email FROM alamatak_students WHERE gradebook_id = ? AND status = 'active'",
+      "SELECT s.id, s.external_student_id, s.display_name, s.first_name, s.last_name, s.email, COALESCE(JSON_ARRAYAGG(JSON_OBJECT('id', al.id, 'alias_name', al.alias_name, 'source', al.source)), JSON_ARRAY()) AS aliases FROM alamatak_students s LEFT JOIN alamatak_student_aliases al ON al.student_id = s.id WHERE s.gradebook_id = ? AND s.status = 'active' GROUP BY s.id",
       [gradebook.id]
     );
 
@@ -1644,11 +1816,10 @@ app.post('/api/3alamatak/gradebooks/:id/imports/analyze', verifyToken, requireAc
 });
 
 app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeacherOrAdmin, handleOptionalUpload, async (req, res) => {
+  let payload = req.body || {};
   try {
     const gradebook = await getAlamatakGradebook(req, req.params.id);
     if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
-
-    let payload = req.body || {};
 
     if (req.file) {
       const isXlsx = /\.xlsx?$/i.test(req.file.originalname);
@@ -1674,7 +1845,7 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
       }
 
       const [existingStudents] = await db.query(
-        "SELECT id, external_student_id, display_name, first_name, last_name, email FROM alamatak_students WHERE gradebook_id = ? AND status = 'active'",
+        "SELECT s.id, s.external_student_id, s.display_name, s.first_name, s.last_name, s.email, COALESCE(JSON_ARRAYAGG(JSON_OBJECT('id', al.id, 'alias_name', al.alias_name, 'source', al.source)), JSON_ARRAY()) AS aliases FROM alamatak_students s LEFT JOIN alamatak_student_aliases al ON al.student_id = s.id WHERE s.gradebook_id = ? AND s.status = 'active' GROUP BY s.id",
         [gradebook.id]
       );
 
@@ -1747,6 +1918,9 @@ app.post('/api/3alamatak/gradebooks/:id/imports', verifyToken, requireActiveTeac
     res.status(201).json({ import_id: result.importId, message: 'Import persisted.', summary: result });
   } catch (error) {
     console.error('3alamatak import error:', error);
+    try {
+      if (payload?.original_filename) await db.query(`INSERT INTO alamatak_imports (gradebook_id, uploaded_by, original_filename, academic_year, metadata, status, completed_at) VALUES (?, ?, ?, ?, ?, 'failed', NULL)`, [req.params.id, req.user.id, String(payload.original_filename).slice(0, 512), payload.academic_year || null, JSON.stringify({ error: error.message || 'Import failed' })]);
+    } catch (historyError) { console.error('3alamatak failed-import history error:', historyError); }
     res.status(500).json({ message: error.message || 'Internal server error.' });
   }
 });

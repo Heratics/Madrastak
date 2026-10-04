@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { buildWorkbookImportPackage, readXlsxWorkbook } = require('./workbookParser');
+const { buildWorkbookImportPackage, readXlsxWorkbook, matchImportedRoster } = require('./workbookParser');
 const { buildUniqueStudents, persistImportPackage, persistImportTransaction } = require('./importPersistence');
 const { filterGradebooksForList } = require('./gradebookAccess');
 
@@ -18,6 +18,24 @@ test('canonical roster and duplicate prevention are deterministic', () => {
   ]);
   assert.equal(pkg.students.length, 2);
   assert.equal(buildUniqueStudents([...pkg.students, pkg.students[0]]).length, 2);
+});
+
+test('teacher-defined aliases resolve exactly without fuzzy alias creation', () => {
+  const matched = matchImportedRoster([{ id: 7, display_name: 'Oweis Alzayed', aliases: [{ alias_name: 'Oweis Omar Alzayed' }] }], [{ key: 'Oweis Omar Alzayed', display_name: 'Oweis Omar Alzayed' }]);
+  assert.equal(matched[0].mode, 'alias');
+  assert.equal(matched[0].matchedStudent.id, 7);
+  assert.equal(matchImportedRoster([{ id: 7, display_name: 'Oweis Alzayed' }], [{ key: 'Oweis Omar Alzayed', display_name: 'Oweis Omar Alzayed' }])[0].mode, 'fuzzy');
+});
+
+test('worksheet diagnostics retain source-year warnings and review counts', () => {
+  const pkg = buildWorkbookImportPackage([
+    { name: '2026-2027 Grades', rows: [['Student Name', 'Quiz'], ['Aisha Noor', '9']] },
+    { name: 'Sheet3', rows: [['Aisha Noor']] },
+  ], 'workbook.xlsx', { academicYear: '2025-2026' });
+  const sheet = pkg.sheets.find((item) => item.name === '2026-2027 Grades');
+  assert.ok(sheet.diagnostics);
+  assert.equal(sheet.diagnostics.warning, 'Source year 2026-2027 differs from selected gradebook year 2025-2026.');
+  assert.ok(Array.isArray(pkg.warnings));
 });
 
 test('persistImportPackage batches writes and persistImportTransaction rolls back on failure', async () => {

@@ -68,6 +68,7 @@ export default function ThreeAlamatakPage() {
   const [assessments, setAssessments] = useState([]);
   const [schemes, setSchemes] = useState([]);
   const [historicalRecords, setHistoricalRecords] = useState([]);
+  const [importHistory, setImportHistory] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
   const [marks, setMarks] = useState({});
@@ -111,13 +112,14 @@ export default function ThreeAlamatakPage() {
     if (!id) return;
     setBusy(true);
     try {
-      const [current, currentStudents, currentAssessments, currentAnalytics, currentSchemes, currentRecords] = await Promise.all([
+      const [current, currentStudents, currentAssessments, currentAnalytics, currentSchemes, currentRecords, currentImports] = await Promise.all([
         threeAlamatakApi.getGradebook(id),
         threeAlamatakApi.listStudents(id),
         threeAlamatakApi.listAssessments(id),
         threeAlamatakApi.getAnalytics(id),
         threeAlamatakApi.listSchemes(id).catch(() => []),
         threeAlamatakApi.listHistoricalRecords(id).catch(() => []),
+        threeAlamatakApi.listImports(id).catch(() => []),
       ]);
       setGradebook(current);
       setStudents(currentStudents);
@@ -125,6 +127,7 @@ export default function ThreeAlamatakPage() {
       setAnalytics(currentAnalytics);
       setSchemes(currentSchemes);
       setHistoricalRecords(currentRecords);
+      setImportHistory(currentImports);
       setActiveAssessmentId((currentActive) =>
         currentAssessments.some((assessment) => assessment.id === currentActive)
           ? currentActive
@@ -632,6 +635,7 @@ export default function ThreeAlamatakPage() {
           {gradebook && view === 'classes' && (
             <WorkspaceView
               gradebook={gradebook}
+              gradebookId={selectedId}
               students={students}
               assessments={assessments}
               activeAssessment={activeAssessment}
@@ -639,6 +643,7 @@ export default function ThreeAlamatakPage() {
               setMarks={setMarks}
               schemes={schemes}
               historicalRecords={historicalRecords}
+              importHistory={importHistory}
               onAddStudent={() => setShowStudentForm(true)}
               onEditStudent={setEditingStudent}
               onAddAssessment={() => setShowAssessmentForm(true)}
@@ -770,6 +775,7 @@ function ClassesView({ gradebooks, selectedId, gradebookTab, onTabChange, onSele
 }
 
 function WorkspaceView({
+  gradebookId,
   students,
   assessments,
   activeAssessment,
@@ -777,6 +783,7 @@ function WorkspaceView({
   setMarks,
   schemes,
   historicalRecords,
+  importHistory,
   onAddStudent,
   onEditStudent,
   onAddAssessment,
@@ -800,6 +807,7 @@ function WorkspaceView({
           ['assessments', 'Assessments'],
           ['schemes', 'Grading Schemes'],
           ['records', 'Records & History'],
+          ['imports', 'Import History'],
           ['analytics', 'Analytics'],
         ].map(([key, label]) => (
           <button
@@ -816,14 +824,12 @@ function WorkspaceView({
         <div className="p-5">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="font-black">Roster</h3>
-            <button type="button" onClick={onAddStudent} className="inline-flex min-h-9 items-center gap-2 rounded-xl bg-teal-700 px-3 text-sm font-bold text-white">
-              <Plus className="h-4 w-4" /> Add student
-            </button>
+            <div className="flex items-center gap-2"><DuplicateReview gradebookId={gradebookId} /><button type="button" onClick={onAddStudent} className="inline-flex min-h-9 items-center gap-2 rounded-xl bg-teal-700 px-3 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Add student</button></div>
           </div>
           <SimpleTable
             headers={['Student ID', 'Name', 'Status', 'Action']}
             rows={students.map((student) => [student.external_student_id || student.id, student.display_name, student.status, (
-              <button type="button" key={student.id} onClick={() => onEditStudent?.(student)} className="text-xs font-bold text-teal-700">Edit</button>
+              <span key={student.id} className="flex items-center gap-3"><button type="button" onClick={() => onEditStudent?.(student)} className="text-xs font-bold text-teal-700">Edit</button><AliasManager gradebookId={gradebookId} student={student} /></span>
             )])}
           />
         </div>
@@ -865,6 +871,7 @@ function WorkspaceView({
       {tab === 'records' && (
         <RecordsTab records={historicalRecords} onEdit={onEditRecord} onDelete={onDeleteRecord} />
       )}
+      {tab === 'imports' && <ImportHistoryTab gradebookId={gradebookId} imports={importHistory} />}
       {tab === 'analytics' && <Analytics analytics={analytics} students={students} />}
     </div>
   );
@@ -1213,6 +1220,43 @@ function StudentsView({ students, search, setSearch, onAdd, onEdit, onArchive })
   );
 }
 
+function AliasManager({ gradebookId, student }) {
+  const [open, setOpen] = useState(false);
+  const [aliases, setAliases] = useState([]);
+  const [value, setValue] = useState('');
+  const [error, setError] = useState('');
+  const load = async () => { try { setAliases(await threeAlamatakApi.listStudentAliases(gradebookId, student.id)); setOpen(true); } catch (e) { setError(e.message); } };
+  const add = async () => { if (!value.trim()) return; try { const alias = await threeAlamatakApi.addStudentAlias(gradebookId, student.id, value.trim()); setAliases((items) => [...items, alias]); setValue(''); setError(''); } catch (e) { setError(e.message); } };
+  if (!open) return <button type="button" onClick={load} className="text-xs font-bold text-slate-600">Aliases</button>;
+  return <span className="relative inline-flex items-center gap-1">
+    <button type="button" onClick={() => setOpen(false)} className="text-xs font-bold text-slate-600">Close aliases</button>
+    <span className="absolute right-0 top-7 z-20 w-72 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-xl">
+      <p className="text-xs font-black text-slate-800">Aliases for {student.display_name}</p>
+      <div className="mt-2 space-y-1">{aliases.map((alias) => <span key={alias.id} className="flex items-center justify-between rounded bg-slate-50 px-2 py-1 text-xs"><span>{alias.alias_name} <em className="text-slate-400">({alias.source})</em></span><button type="button" onClick={async () => { await threeAlamatakApi.removeStudentAlias(gradebookId, student.id, alias.id); setAliases((items) => items.filter((item) => item.id !== alias.id)); }} className="font-bold text-red-600">×</button></span>)}</div>
+      <div className="mt-2 flex gap-1"><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="Add known spelling" className="min-w-0 flex-1 rounded border border-slate-200 px-2 py-1 text-xs" /><button type="button" onClick={add} className="rounded bg-teal-700 px-2 py-1 text-xs font-bold text-white">Add</button></div>
+      {error && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
+    </span>
+  </span>;
+}
+
+function DuplicateReview({ gradebookId }) {
+  const [items, setItems] = useState(null); const [preview, setPreview] = useState(null); const [error, setError] = useState(''); const [resolutions, setResolutions] = useState({});
+  const load = async () => { try { setItems(await threeAlamatakApi.listDuplicateStudents(gradebookId)); setError(''); } catch (e) { setError(e.message); } };
+  const showPreview = async (item) => { try { setPreview(await threeAlamatakApi.previewStudentMerge(gradebookId, { source_student_id: item.student_b.id, destination_student_id: item.student_a.id })); setResolutions({}); } catch (e) { setError(e.message); } };
+  const merge = async () => { if (!preview || !window.confirm(`Merge ${preview.source_student.display_name} into ${preview.destination_student.display_name}?`)) return; try { await threeAlamatakApi.mergeStudents(gradebookId, { source_student_id: preview.source_student.id, destination_student_id: preview.destination_student.id, resolutions }); window.location.reload(); } catch (e) { setError(e.message); } };
+  return <span className="relative"><button type="button" onClick={load} className="rounded-xl border border-amber-200 px-3 py-2 text-xs font-bold text-amber-800">Review duplicates</button>{items && <span className="absolute right-0 top-10 z-30 block w-[min(92vw,34rem)] rounded-xl border border-slate-200 bg-white p-4 text-left shadow-xl"><span className="flex items-center justify-between"><strong className="text-sm">Possible duplicate students ({items.length})</strong><button type="button" onClick={() => setItems(null)} className="text-slate-400">×</button></span>{items.length === 0 && <p className="mt-3 text-xs text-slate-500">No likely duplicates were detected.</p>}{items.map((item, index) => <span key={`${item.student_a.id}-${item.student_b.id}`} className="mt-3 block rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs"><strong>{item.student_a.display_name}</strong> ↔ <strong>{item.student_b.display_name}</strong><span className="mt-1 block text-amber-800">{item.reasons.join(', ')} · marks: {item.marks[item.student_a.id] || 0}/{item.marks[item.student_b.id] || 0}</span><button type="button" onClick={() => showPreview(item)} className="mt-2 font-bold text-teal-700">Preview merge</button></span>)}{preview && <span className="mt-4 block rounded-lg border border-red-200 bg-red-50 p-3 text-xs"><strong>Merge preview</strong><p className="mt-1">Move {preview.source_student.display_name} into {preview.destination_student.display_name}. Marks: {preview.source_marks}; historical records: {preview.historical_records}; aliases preserved: {preview.aliases.length}.</p>{preview.conflicts.length > 0 && <span className="mt-2 block">{preview.conflicts.map((conflict) => <label key={conflict.component_id} className="mt-1 flex items-center gap-2">Component {conflict.component_id}:<select value={resolutions[String(conflict.component_id)] || ''} onChange={(event) => setResolutions({ ...resolutions, [String(conflict.component_id)]: event.target.value })} className="rounded border border-red-200"><option value="">Resolve…</option><option value="source">Use source</option><option value="destination">Use destination</option></select></label>)}</span>}<button type="button" onClick={merge} className="mt-3 rounded bg-red-700 px-3 py-1.5 font-bold text-white">Confirm merge</button></span>}{error && <p className="mt-2 text-xs text-red-600">{error}</p>}</span>}</span>;
+}
+
+function ImportHistoryTab({ gradebookId, imports }) {
+  const [busyImport, setBusyImport] = useState(null);
+  const rollback = async (item) => {
+    if (!window.confirm(`Roll back import "${item.original_filename}"? Only safely attributable records will be removed.`)) return;
+    setBusyImport(item.id);
+    try { await threeAlamatakApi.rollbackImport(gradebookId, item.id); window.location.reload(); } catch (error) { window.alert(error.message); } finally { setBusyImport(null); }
+  };
+  return <div className="p-5"><div className="mb-4"><h3 className="font-black">Import history</h3><p className="text-xs text-slate-500">Imports are owner-scoped and retain worksheet/provenance metadata.</p></div><SimpleTable headers={['File', 'Imported', 'Worksheets', 'Students', 'Assessments', 'History', 'Status', 'Action']} rows={(imports || []).map((item) => [item.original_filename, item.created_at ? new Date(item.created_at).toLocaleString() : '—', item.worksheet_count, item.created_students, item.created_assessments, item.historical_records, item.status, item.status === 'completed' ? <button type="button" disabled={busyImport === item.id} onClick={() => rollback(item)} className="text-xs font-bold text-red-700">{busyImport === item.id ? 'Rolling back…' : 'Rollback'}</button> : '—'])} /></div>;
+}
+
 function ImportView({
   selectedId,
   importPreview,
@@ -1297,6 +1341,7 @@ function ImportView({
               <Stat label="Unresolved" value={importPreview.pkg.diagnostics?.unresolved_references?.length || 0} />
               <Stat label="Historical Records" value={importPreview.pkg.summary.historicalCount} />
             </div>
+            {(importPreview.pkg.warnings || []).length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-black">Year/source warning</p>{importPreview.pkg.warnings.map((warning, index) => <p key={`${warning.source_year}-${index}`} className="mt-1">{warning.warning}</p>)}</div>}
 
             {pendingAmbiguous > 0 && (
               <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
@@ -1343,6 +1388,7 @@ function ImportView({
                         <th className="px-3 py-3">Worksheet Name</th>
                         <th className="px-3 py-3">Classification</th>
                         <th className="px-3 py-3">Rows</th>
+                        <th className="px-3 py-3">Review</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1363,6 +1409,7 @@ function ImportView({
                             </span>
                           </td>
                           <td className="px-3 py-3 text-xs text-slate-500">{sheet.rows?.length || 0}</td>
+                          <td className="px-3 py-3 text-xs text-slate-500">{sheet.diagnostics ? `${sheet.diagnostics.recognized_students || 0} students · ${sheet.diagnostics.marks || 0} marks · ${sheet.diagnostics.unmatched_rows || 0} unmatched` : '—'}{sheet.diagnostics?.reason && <span className="mt-1 block">{sheet.diagnostics.reason}</span>}{sheet.diagnostics?.warning && <span className="mt-1 block font-bold text-amber-700">{sheet.diagnostics.warning}</span>}</td>
                         </tr>
                       ))}
                     </tbody>

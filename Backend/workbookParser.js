@@ -87,6 +87,9 @@ function findConfidentNameMatch(roster, name, externalId = '') {
   }
 
   const normalized = normalizeImportedName(name);
+  const aliasMatches = roster.filter((student) => (student.aliases || []).some((alias) => normalizeImportedName(alias.alias_name || alias) === normalized));
+  if (aliasMatches.length === 1) return { item: aliasMatches[0], score: 1, mode: 'alias' };
+  if (aliasMatches.length > 1) return { item: null, score: 1, mode: 'ambiguous-alias' };
   const exact = roster.filter((student) => normalizeImportedName(student.display_name || student.name) === normalized);
   if (exact.length === 1) return { item: exact[0], score: 1, mode: 'exact' };
   if (exact.length > 1) return { item: null, score: 1, mode: 'ambiguous-exact' };
@@ -128,6 +131,9 @@ function matchImportedRoster(existingStudents = [], importedStudents = []) {
     }
 
     const norm = normalizeImportedName(importedName);
+    const aliasMatches = existingStudents.filter((s) => (s.aliases || []).some((alias) => normalizeImportedName(alias.alias_name || alias) === norm));
+    if (aliasMatches.length === 1) return { ...imported, status: 'exact', mode: 'alias', matchedStudent: aliasMatches[0], score: 1, candidates: aliasMatches, resolution: String(aliasMatches[0].id), include: true };
+    if (aliasMatches.length > 1) return { ...imported, status: 'ambiguous', mode: 'ambiguous-alias', matchedStudent: null, score: 1, candidates: aliasMatches, resolution: '', include: true };
     const exact = existingStudents.filter((s) => normalizeImportedName(s.display_name || s.name) === norm);
     if (exact.length === 1) {
       return {
@@ -574,7 +580,7 @@ function resolvePackageReferences(roster, assessments, historicalRecords) {
       });
       return { ...reference, student_key: match.item.key };
     }
-    unresolved.push({ student_key: reference.student_key, mode: match.mode, score: match.score });
+    unresolved.push({ student_key: reference.student_key, source_sheet: reference.source_sheet || reference.payload?.source_sheet || null, source_row: reference.source_row || reference.payload?.source_row || null, mode: match.mode, score: match.score });
     return { ...reference, student_key: null };
   };
   const nextAssessments = assessments.map((assessment) => ({
@@ -1034,6 +1040,18 @@ function buildWorkbookImportPackage(sheets, fileName = '', options = {}) {
   });
 
   const resolved = resolvePackageReferences(extractedStudents, deduplicateAssessments(assessments), historicalRecords);
+  const logicalAssessments = resolved.assessments;
+  const worksheetDiagnostics = plans.map((plan) => {
+    const matches = (resolved.matches || []).filter((match) => match.source_sheet === plan.name);
+    const unmatched = (resolved.unresolved || []).filter((item) => item.source_sheet === plan.name);
+    const sheetAssessments = logicalAssessments.filter((assessment) => (assessment.source_sheets || [assessment.source_sheet]).includes(plan.name));
+    const marks = sheetAssessments.flatMap((assessment) => assessment.marks || []).filter((mark) => mark.source_sheet === plan.name || !mark.source_sheet);
+    const statuses = marks.filter((mark) => mark.mark_status);
+    const sourceYear = `${plan.name} ${(plan.rows || []).slice(0, 8).flat().map(cellText).join(' ')}`.match(/20\d{2}\s*[-–]\s*20\d{2}/)?.[0]?.replace(/\s/g, '') || null;
+    const warning = sourceYear && sourceYear.replace('–', '-') !== String(academicYear).replace('–', '-') ? `Source year ${sourceYear} differs from selected gradebook year ${academicYear}.` : null;
+    return { recognized_students: extractedStudents.filter((student) => (student.source_sheets || []).includes(plan.name)).length, matched_students: matches.length, ambiguous_matches: matches.filter((m) => String(m.mode || '').startsWith('ambiguous')).length, unmatched_rows: unmatched.length, marks: marks.length, statuses: statuses.length, historical_records: historicalRecords.filter((record) => record.source_sheet === plan.name || record.payload?.source_sheet === plan.name).length, orphan_rows: (plan.orphan_marks || []).length, reason: plan.reason || `Detected as ${plan.label || plan.type}.`, source_year: sourceYear, warning };
+  });
+  plans.forEach((plan, index) => { plan.diagnostics = worksheetDiagnostics[index]; });
 
   return {
     original_filename: fileName || 'workbook.xlsx',
@@ -1048,6 +1066,7 @@ function buildWorkbookImportPackage(sheets, fileName = '', options = {}) {
     assessments: resolved.assessments,
     historical_records: resolved.historicalRecords,
     diagnostics: { unresolved_references: resolved.unresolved, matches: resolved.matches, orphan_marks: deduplicateAssessments(assessments).flatMap((assessment) => assessment.orphan_marks || []) },
+    warnings: worksheetDiagnostics.filter((diagnostic) => diagnostic.warning),
     summary: {
       totalSheets: plans.length,
       selectedSheets: selectedPlans.length,

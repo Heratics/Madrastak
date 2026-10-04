@@ -118,6 +118,9 @@ export function matchImportedRoster(existingStudents = [], importedStudents = []
 
     // Exact name match
     const norm = normalizeImportedName(importedName);
+    const aliasMatches = existingStudents.filter((s) => (s.aliases || []).some((alias) => normalizeImportedName(alias.alias_name || alias) === norm));
+    if (aliasMatches.length === 1) return { ...imported, status: 'exact', mode: 'alias', matchedStudent: aliasMatches[0], score: 1, candidates: aliasMatches, resolution: String(aliasMatches[0].id), include: true };
+    if (aliasMatches.length > 1) return { ...imported, status: 'ambiguous', mode: 'ambiguous-alias', matchedStudent: null, score: 1, candidates: aliasMatches, resolution: '', include: true };
     const exact = existingStudents.filter((s) => normalizeImportedName(s.display_name || s.name) === norm);
     if (exact.length === 1) {
       return {

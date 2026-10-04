@@ -78,6 +78,15 @@ test('roster matching is conservative about ambiguity', () => {
   assert.equal(ambiguous.mode, 'ambiguous-exact');
 });
 
+test('teacher-defined aliases match explicitly and are labeled as aliases', () => {
+  const result = matchImportedRoster(
+    [{ id: 7, display_name: 'Oweis Alzayed', aliases: [{ alias_name: 'Oweis Omar Alzayed' }] }],
+    [{ key: 'Oweis Omar Alzayed', display_name: 'Oweis Omar Alzayed' }],
+  )[0];
+  assert.equal(result.mode, 'alias');
+  assert.equal(result.matchedStudent.id, 7);
+});
+
 test('matchImportedRoster accurately classifies exact, fuzzy, ambiguous, and new students', () => {
   const existing = [
     { id: 101, display_name: 'Ahmad Shara', external_student_id: 'STU-101' },

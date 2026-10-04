@@ -1521,101 +1521,70 @@ app.get('/api/3alamatak/gradebooks/:id/reports/assessment/:assessmentId', verify
   } catch (error) { res.status(500).json({ message: 'Assessment report failed.' }); }
 });
 
+async function getAnalyticsSettings(req, gradebookId) {
+  const [rows] = await db.query('SELECT low_average_threshold, missing_assessments_threshold, completion_threshold, decline_threshold FROM alamatak_analytics_settings WHERE gradebook_id = ?', [gradebookId]);
+  if (rows.length) return rows[0];
+  await db.query('INSERT INTO alamatak_analytics_settings (gradebook_id) VALUES (?) ON DUPLICATE KEY UPDATE gradebook_id = gradebook_id', [gradebookId]);
+  return { low_average_threshold: 50, missing_assessments_threshold: 2, completion_threshold: 80, decline_threshold: 5 };
+}
+
+function analyticsMedian(values) {
+  const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+app.get('/api/3alamatak/gradebooks/:id/analytics/settings', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    res.json(await getAnalyticsSettings(req, gradebook.id));
+  } catch (error) { res.status(500).json({ message: 'Analytics settings failed.' }); }
+});
+
+app.put('/api/3alamatak/gradebooks/:id/analytics/settings', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const body = req.body || {};
+    const low = Number(body.low_average_threshold); const missing = Number(body.missing_assessments_threshold); const completion = Number(body.completion_threshold); const decline = Number(body.decline_threshold);
+    if (![low, missing, completion, decline].every(Number.isFinite) || low < 0 || low > 100 || completion < 0 || completion > 100 || decline <= 0 || decline > 100 || !Number.isInteger(missing) || missing < 1) return res.status(400).json({ message: 'Thresholds must be numeric, bounded, and internally consistent.' });
+    await db.query(`INSERT INTO alamatak_analytics_settings (gradebook_id, low_average_threshold, missing_assessments_threshold, completion_threshold, decline_threshold) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE low_average_threshold = VALUES(low_average_threshold), missing_assessments_threshold = VALUES(missing_assessments_threshold), completion_threshold = VALUES(completion_threshold), decline_threshold = VALUES(decline_threshold)`, [gradebook.id, low, missing, completion, decline]);
+    res.json(await getAnalyticsSettings(req, gradebook.id));
+  } catch (error) { res.status(500).json({ message: 'Analytics settings failed.' }); }
+});
+
 app.get('/api/3alamatak/gradebooks/:id/analytics', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   try {
-    const gradebook = await getAlamatakGradebook(req, req.params.id);
-    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
-    const [students] = await db.query('SELECT id, display_name FROM alamatak_students WHERE gradebook_id = ? AND status <> \'archived\' ORDER BY display_name', [gradebook.id]);
-    const [assessments] = await db.query(
-      `SELECT a.id, a.title, a.assessment_date, c.id AS component_id, c.name AS component_name, c.maximum_score
-       FROM alamatak_assessments a
-       JOIN alamatak_assessment_components c ON c.assessment_id = a.id
-       WHERE a.gradebook_id = ? ORDER BY a.assessment_date IS NULL, a.assessment_date, a.id, c.sort_order, c.id`,
-      [gradebook.id]
-    );
-    const [marks] = await db.query(
-      `SELECT m.student_id, m.component_id, m.score, m.mark_status
-       FROM alamatak_marks m
-       JOIN alamatak_assessment_components c ON c.id = m.component_id
-       JOIN alamatak_assessments a ON a.id = c.assessment_id
-       WHERE a.gradebook_id = ?`,
-      [gradebook.id]
-    );
-    const median = (values) => {
-      const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
-      if (!sorted.length) return null;
-      const middle = Math.floor(sorted.length / 2);
-      return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-    };
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const settings = await getAnalyticsSettings(req, gradebook.id);
+    const startDate = req.query.start_date || null; const endDate = req.query.end_date || null; const period = req.query.period || 'all';
+    if ((startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) || (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) || (startDate && endDate && startDate > endDate)) return res.status(400).json({ message: 'Analytics dates must be valid YYYY-MM-DD values.' });
+    if (period !== 'all' && period !== 'custom') return res.status(400).json({ message: 'This gradebook has no reliable semester metadata; use All assessments or a custom date range.' });
+    const studentsQuery = await db.query('SELECT id, display_name, status FROM alamatak_students WHERE gradebook_id = ? AND status <> \'archived\' ORDER BY display_name', [gradebook.id]);
+    const students = studentsQuery[0];
+    const dateConditions = ['a.gradebook_id = ?', 'a.is_historical = FALSE']; const dateParams = [gradebook.id];
+    if (startDate) { dateConditions.push('a.assessment_date >= ?'); dateParams.push(startDate); }
+    if (endDate) { dateConditions.push('a.assessment_date <= ?'); dateParams.push(endDate); }
+    const [assessmentRows] = await db.query(`SELECT a.id, a.title, a.assessment_date, a.source_year, c.id AS component_id, c.name AS component_name, c.maximum_score, c.sort_order FROM alamatak_assessments a JOIN alamatak_assessment_components c ON c.assessment_id = a.id WHERE ${dateConditions.join(' AND ')} ORDER BY a.assessment_date IS NULL, a.assessment_date, a.id, c.sort_order, c.id`, dateParams);
+    const assessmentIds = [...new Set(assessmentRows.map((row) => row.id))];
+    const [marks] = assessmentIds.length ? await db.query(`SELECT m.student_id, m.component_id, m.score, m.mark_status FROM alamatak_marks m JOIN alamatak_assessment_components c ON c.id = m.component_id WHERE c.assessment_id IN (?)`, [assessmentIds]) : [[]];
     const numeric = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
     const markMap = new Map(marks.map((mark) => [`${mark.student_id}:${mark.component_id}`, mark]));
     const assessmentMap = new Map();
-    assessments.forEach((row) => {
-      if (!assessmentMap.has(row.id)) assessmentMap.set(row.id, { id: row.id, title: row.title, assessment_date: row.assessment_date, components: [] });
-      assessmentMap.get(row.id).components.push({ id: row.component_id, name: row.component_name, maximum_score: Number(row.maximum_score) });
-    });
-    const assessmentAnalytics = [...assessmentMap.values()].map((assessment) => {
-      const entries = students.flatMap((student) => assessment.components.map((component) => markMap.get(`${student.id}:${component.id}`)).filter(Boolean));
-      const numericEntries = entries.filter((entry) => numeric(entry.score));
-      const percentages = numericEntries.map((entry) => {
-        const component = assessment.components.find((item) => item.id === entry.component_id);
-        return component?.maximum_score ? Number(entry.score) / component.maximum_score * 100 : null;
-      }).filter((value) => value !== null);
-      const expected = students.length * assessment.components.length;
-      return {
-        ...assessment,
-        average: percentages.length ? percentages.reduce((sum, value) => sum + value, 0) / percentages.length : null,
-        highest: percentages.length ? Math.max(...percentages) : null,
-        lowest: percentages.length ? Math.min(...percentages) : null,
-        median: median(percentages),
-        expected_marks: expected,
-        recorded_marks: entries.length,
-        completion_percent: expected ? entries.length / expected * 100 : null,
-        missing_count: Math.max(0, expected - entries.length),
-        absent_count: entries.filter((entry) => String(entry.mark_status || '').toLowerCase() === 'absent').length,
-        status_count: entries.filter((entry) => entry.mark_status && String(entry.mark_status).toLowerCase() !== 'absent').length,
-        distribution: { below_50: percentages.filter((value) => value < 50).length, from_50_to_74: percentages.filter((value) => value >= 50 && value < 75).length, from_75_to_89: percentages.filter((value) => value >= 75 && value < 90).length, above_90: percentages.filter((value) => value >= 90).length },
-      };
-    });
-    const componentAnalytics = assessments.map((component) => {
-      const entries = students.map((student) => markMap.get(`${student.id}:${component.component_id}`)).filter(Boolean);
-      const values = entries.filter((entry) => numeric(entry.score)).map((entry) => Number(entry.score));
-      const maximum = Number(component.maximum_score);
-      return { id: component.component_id, name: component.component_name, assessment_id: component.id, assessment_title: component.title, maximum_score: maximum, average: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, average_percent: values.length && maximum ? values.reduce((sum, value) => sum + value, 0) / values.length / maximum * 100 : null, highest: values.length ? Math.max(...values) : null, lowest: values.length ? Math.min(...values) : null, completion_percent: students.length ? entries.length / students.length * 100 : null, missing_count: Math.max(0, students.length - entries.length), absent_count: entries.filter((entry) => String(entry.mark_status || '').toLowerCase() === 'absent').length };
-    });
-    const rows = students.map((student) => {
-      const entries = assessments.map((component) => markMap.get(`${student.id}:${component.component_id}`));
-      const numericEntries = entries.filter((entry) => entry && numeric(entry.score));
-      const possible = numericEntries.reduce((sum, entry) => sum + Number(assessments.find((item) => item.component_id === entry.component_id)?.maximum_score || 0), 0);
-      const score = numericEntries.reduce((sum, entry) => sum + Number(entry.score), 0);
-      return { student_id: student.id, display_name: student.display_name, score, maximum_score: possible, percent: possible ? score / possible * 100 : null, expected_marks: assessments.length, recorded_marks: entries.filter(Boolean).length, missing_marks: assessments.length - entries.filter(Boolean).length, absent_marks: entries.filter((entry) => String(entry?.mark_status || '').toLowerCase() === 'absent').length, incomplete_assessments: assessmentAnalytics.filter((assessment) => assessment.components.some((component) => !markMap.has(`${student.id}:${component.id}`))).length };
-    });
-    const populated = rows.filter((row) => row.percent !== null);
-    const bands = [
-      ['Below 50%', (value) => value < 50], ['50–74%', (value) => value >= 50 && value < 75], ['75–89%', (value) => value >= 75 && value < 90], ['90–100%', (value) => value >= 90],
-    ].map(([label, predicate]) => ({ label, count: populated.filter((row) => predicate(row.percent)).length }));
-    const recordedMarks = marks.length;
-    const expectedMarks = students.length * assessments.length;
-    res.json({
-      summary: { students: students.length, assessments: assessmentMap.size, recorded_marks: recordedMarks, expected_marks: expectedMarks, assessed_students: populated.length, unassessed_students: students.length - populated.length, completion_percent: expectedMarks ? recordedMarks / expectedMarks * 100 : null },
-      students: rows,
-      class_average: populated.length ? populated.reduce((sum, row) => sum + row.percent, 0) / populated.length : null,
-      highest: populated.length ? Math.max(...populated.map((row) => row.percent)) : null,
-      lowest: populated.length ? Math.min(...populated.map((row) => row.percent)) : null,
-      median: median(populated.map((row) => row.percent)),
-      range: populated.length ? Math.max(...populated.map((row) => row.percent)) - Math.min(...populated.map((row) => row.percent)) : null,
-      distribution: bands.map((band) => ({ ...band, percent: students.length ? band.count / students.length * 100 : 0 })),
-      assessments: assessmentAnalytics,
-      components: componentAnalytics,
-      strongest_components: [...componentAnalytics].filter((item) => item.average_percent !== null).sort((a, b) => b.average_percent - a.average_percent).slice(0, 5),
-      weakest_components: [...componentAnalytics].filter((item) => item.average_percent !== null).sort((a, b) => a.average_percent - b.average_percent).slice(0, 5),
-      progress: assessmentAnalytics.filter((item) => item.average !== null).map((item) => ({ assessment_id: item.id, title: item.title, assessment_date: item.assessment_date, average: item.average })),
-      needs_attention: rows.filter((row) => row.percent === null || row.missing_marks > 0 || row.absent_marks > 0).sort((a, b) => (a.percent ?? -1) - (b.percent ?? -1)),
-    });
-  } catch (error) {
-    console.error('3alamatak analytics error:', error);
-    res.status(500).json({ message: 'Internal server error.' });
-  }
+    assessmentRows.forEach((row) => { if (!assessmentMap.has(row.id)) assessmentMap.set(row.id, { id: row.id, title: row.title, assessment_date: row.assessment_date, source_year: row.source_year, components: [] }); assessmentMap.get(row.id).components.push({ id: row.component_id, name: row.component_name, maximum_score: Number(row.maximum_score), sort_order: row.sort_order }); });
+    const assessments = [...assessmentMap.values()];
+    const percentForEntries = (entries) => { const valid = entries.filter((entry) => numeric(entry.mark?.score) && Number(entry.maximum_score) > 0); const possible = valid.reduce((sum, entry) => sum + Number(entry.maximum_score), 0); const score = valid.reduce((sum, entry) => sum + Number(entry.mark.score), 0); return { percent: possible ? score / possible * 100 : null, numeric_count: valid.length, possible, score }; };
+    const assessmentAnalytics = assessments.map((assessment) => { const entries = students.flatMap((student) => assessment.components.map((component) => ({ mark: markMap.get(`${student.id}:${component.id}`), maximum_score: component.maximum_score })).filter((entry) => entry.mark)); const values = entries.map((entry) => percentForEntries([entry]).percent).filter((value) => value !== null); const expected = students.length * assessment.components.length; const distribution = { below_50: values.filter((value) => value < 50).length, from_50_to_74: values.filter((value) => value >= 50 && value < 75).length, from_75_to_89: values.filter((value) => value >= 75 && value < 90).length, above_90: values.filter((value) => value >= 90).length }; return { ...assessment, average: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, median: analyticsMedian(values), highest: values.length ? Math.max(...values) : null, lowest: values.length ? Math.min(...values) : null, expected_marks: expected, recorded_marks: entries.length, numeric_marks: values.length, completion_percent: expected ? entries.length / expected * 100 : null, numeric_completion_percent: expected ? values.length / expected * 100 : null, missing_count: Math.max(0, expected - entries.length), absent_count: entries.filter((entry) => /absent/i.test(entry.mark.mark_status || '')).length, not_started_count: expected - entries.length, incomplete_count: entries.filter((entry) => entry.mark.mark_status && !/absent/i.test(entry.mark.mark_status)).length, distribution }; });
+    const componentAnalytics = assessmentRows.map((row) => { const entries = students.map((student) => markMap.get(`${student.id}:${row.component_id}`)).filter(Boolean); const values = entries.filter((entry) => numeric(entry.score) && Number(row.maximum_score) > 0).map((entry) => Number(entry.score) / Number(row.maximum_score) * 100); return { id: row.component_id, name: row.component_name, assessment_id: row.id, assessment_title: row.title, maximum_score: Number(row.maximum_score), average_percent: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, highest_percent: values.length ? Math.max(...values) : null, lowest_percent: values.length ? Math.min(...values) : null, valid_marks: values.length, completion_percent: students.length ? entries.length / students.length * 100 : null, missing_count: Math.max(0, students.length - entries.length), absent_count: entries.filter((entry) => /absent/i.test(entry.mark_status || '')).length }; });
+    const progressByStudent = new Map(students.map((student) => [student.id, assessments.map((assessment) => { const entries = assessment.components.map((component) => ({ mark: markMap.get(`${student.id}:${component.id}`), maximum_score: component.maximum_score })); const result = percentForEntries(entries); return { assessment_id: assessment.id, title: assessment.title, assessment_date: assessment.assessment_date, percent: result.percent, numeric_marks: result.numeric_count, expected_marks: assessment.components.length, recorded_marks: entries.filter((entry) => entry.mark).length, absent_marks: entries.filter((entry) => /absent/i.test(entry.mark?.mark_status || '')).length }; })]));
+    const rows = students.map((student) => { const progress = progressByStudent.get(student.id); const allEntries = assessments.flatMap((assessment) => assessment.components.map((component) => markMap.get(`${student.id}:${component.id}`)).filter(Boolean)); const numericEntries = allEntries.filter((entry) => numeric(entry.score)); const possible = numericEntries.reduce((sum, entry) => sum + Number(assessmentRows.find((item) => item.component_id === entry.component_id)?.maximum_score || 0), 0); const score = numericEntries.reduce((sum, entry) => sum + Number(entry.score), 0); const percent = possible ? score / possible * 100 : null; const missingMarks = Math.max(0, students.length ? assessmentRows.length - allEntries.length : 0); const reasons = []; if (percent !== null && percent < Number(settings.low_average_threshold)) reasons.push(`Average ${percent.toFixed(1)}% — below configured ${Number(settings.low_average_threshold).toFixed(0)}% threshold`); if (missingMarks >= Number(settings.missing_assessments_threshold)) reasons.push(`${missingMarks} missing marks`); const absentMarks = allEntries.filter((entry) => /absent/i.test(entry.mark_status || '')).length; if (absentMarks >= Number(settings.missing_assessments_threshold)) reasons.push(`${absentMarks} absent marks`); const completion = assessmentRows.length ? allEntries.length / assessmentRows.length * 100 : null; if (completion !== null && completion < Number(settings.completion_threshold)) reasons.push(`Completion ${completion.toFixed(1)}% — below configured ${Number(settings.completion_threshold).toFixed(0)}% threshold`); const recent = progress.filter((item) => item.percent !== null).slice(-3).map((item) => item.percent); if (recent.length >= 3 && recent[1] <= recent[0] - Number(settings.decline_threshold) && recent[2] <= recent[1] - Number(settings.decline_threshold)) reasons.push(`Recent performance declined ${(recent[0] - recent[2]).toFixed(1)} points`); return { student_id: student.id, display_name: student.display_name, score, maximum_score: possible, percent, expected_marks: assessmentRows.length, recorded_marks: allEntries.length, missing_marks: missingMarks, absent_marks: absentMarks, completion_percent: completion, incomplete_assessments: progress.filter((item) => item.recorded_marks > 0 && item.numeric_marks === 0).length, attention_reasons: reasons }; });
+    const populated = rows.filter((row) => row.percent !== null); const bands = [['Below 50%', (value) => value < 50], ['50–74%', (value) => value >= 50 && value < 75], ['75–89%', (value) => value >= 75 && value < 90], ['90–100%', (value) => value >= 90]].map(([label, predicate]) => ({ label, count: populated.filter((row) => predicate(row.percent)).length, percent: populated.length ? populated.filter((row) => predicate(row.percent)).length / populated.length * 100 : 0 }));
+    let finalGrades = { available: false, reason: 'Final grades are not configured for this gradebook.' };
+    const finalView = await loadFinalGradeView(req, gradebook.id);
+    if (finalView?.config) { const ready = finalView.results.filter((result) => result.final_grade); const gradeCounts = {}; ready.forEach((result) => { gradeCounts[result.final_grade] = (gradeCounts[result.final_grade] || 0) + 1; }); const finalPercents = finalView.results.map((result) => result.overall_percent).filter((value) => value !== null && value !== undefined); finalGrades = { available: true, overall_average: finalPercents.length ? finalPercents.reduce((sum, value) => sum + value, 0) / finalPercents.length : null, median: analyticsMedian(finalPercents), grade_counts: gradeCounts, without_final_grade: finalView.results.filter((result) => !result.final_grade).length, incomplete: finalView.results.filter((result) => result.status === 'Incomplete').length, ready: ready.length, not_ready: finalView.results.length - ready.length, readiness: finalView.readiness, category_breakdown: (finalView.config.categories || []).map((category) => { const values = finalView.results.map((result) => result.categories.find((item) => item.id === category.id)?.percent).filter((value) => value !== null && value !== undefined); return { id: category.id, name: category.name, average: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null }; }) }; }
+    const selectedStudentId = req.query.student_id ? Number(req.query.student_id) : null;
+    res.json({ filter: { period, start_date: startDate, end_date: endDate, label: startDate || endDate ? `${startDate || 'Beginning'} → ${endDate || 'Present'}` : 'All assessments' }, definitions: { average: 'Valid numeric marks only', median: 'Valid numeric marks only', completion: 'Recorded marks including explicit status values divided by expected marks', absent: 'Absent status, never numeric zero', missing: 'No recorded mark/status, never numeric zero', zero: 'A valid numeric mark' }, settings, summary: { students: students.length, assessments: assessments.length, recorded_marks: marks.length, expected_marks: students.length * assessmentRows.length, assessed_students: populated.length, unassessed_students: students.length - populated.length, completion_percent: students.length * assessmentRows.length ? marks.length / (students.length * assessmentRows.length) * 100 : null, missing_count: Math.max(0, students.length * assessmentRows.length - marks.length), absent_count: marks.filter((mark) => /absent/i.test(mark.mark_status || '')).length }, students: rows, class_average: populated.length ? populated.reduce((sum, row) => sum + row.percent, 0) / populated.length : null, highest: populated.length ? Math.max(...populated.map((row) => row.percent)) : null, lowest: populated.length ? Math.min(...populated.map((row) => row.percent)) : null, median: analyticsMedian(populated.map((row) => row.percent)), range: populated.length ? Math.max(...populated.map((row) => row.percent)) - Math.min(...populated.map((row) => row.percent)) : null, distribution: bands, assessments: assessmentAnalytics, components: componentAnalytics, strongest_components: [...componentAnalytics].filter((item) => item.average_percent !== null && item.valid_marks >= 2).sort((a, b) => b.average_percent - a.average_percent).slice(0, 5), weakest_components: [...componentAnalytics].filter((item) => item.average_percent !== null && item.valid_marks >= 2).sort((a, b) => a.average_percent - b.average_percent).slice(0, 5), progress: assessmentAnalytics.filter((item) => item.average !== null).map((item) => ({ assessment_id: item.id, title: item.title, assessment_date: item.assessment_date, average: item.average })), student_progress: selectedStudentId ? { student_id: selectedStudentId, rows: progressByStudent.get(selectedStudentId) || [] } : null, needs_attention: rows.filter((row) => row.attention_reasons.length).sort((a, b) => (a.percent ?? -1) - (b.percent ?? -1)), final_grades: finalGrades });
+  } catch (error) { console.error('3alamatak analytics error:', error); res.status(500).json({ message: 'Internal server error.' }); }
 });
 
 app.get('/api/3alamatak/gradebooks/:id/export', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {

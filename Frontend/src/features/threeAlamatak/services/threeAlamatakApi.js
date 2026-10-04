@@ -43,7 +43,12 @@ export const threeAlamatakApi = {
   deleteAssessment: (id) => request(`/api/3alamatak/assessments/${id}`, { method: 'DELETE' }),
   getMarks: (id) => request(`/api/3alamatak/assessments/${id}/marks`),
   saveMarks: (id, marks) => request(`/api/3alamatak/assessments/${id}/marks`, { method: 'PUT', body: JSON.stringify({ marks }) }),
-  getAnalytics: (id) => request(`/api/3alamatak/gradebooks/${id}/analytics`),
+  getAnalytics: (id, params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/api/3alamatak/gradebooks/${id}/analytics${q ? `?${q}` : ''}`);
+  },
+  getAnalyticsSettings: (id) => request(`/api/3alamatak/gradebooks/${id}/analytics/settings`),
+  saveAnalyticsSettings: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/analytics/settings`, { method: 'PUT', body: JSON.stringify(payload) }),
   getStudentReport: (gradebookId, studentId) => request(`/api/3alamatak/gradebooks/${gradebookId}/reports/student/${studentId}`),
   getAssessmentReport: (gradebookId, assessmentId) => request(`/api/3alamatak/gradebooks/${gradebookId}/reports/assessment/${assessmentId}`),
   getFinalGrades: (id) => request(`/api/3alamatak/gradebooks/${id}/final-grades`),

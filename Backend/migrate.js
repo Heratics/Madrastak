@@ -424,6 +424,17 @@ async function runMigrations() {
       FOREIGN KEY (component_id) REFERENCES alamatak_assessment_components(id) ON DELETE CASCADE,
       UNIQUE KEY uq_alamatak_final_item (category_id, component_id), INDEX idx_alamatak_final_items_assessment (assessment_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS alamatak_analytics_settings (
+      id INT AUTO_INCREMENT PRIMARY KEY, gradebook_id INT NOT NULL UNIQUE,
+      low_average_threshold DECIMAL(5,2) NOT NULL DEFAULT 50,
+      missing_assessments_threshold INT NOT NULL DEFAULT 2,
+      completion_threshold DECIMAL(5,2) NOT NULL DEFAULT 80,
+      decline_threshold DECIMAL(5,2) NOT NULL DEFAULT 5,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (gradebook_id) REFERENCES alamatak_gradebooks(id) ON DELETE CASCADE,
+      INDEX idx_alamatak_analytics_settings_gradebook (gradebook_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     console.log('✔ 3alamatak tables verified.');
 
     console.log('\n🎉 All migrations completed successfully! Database is up to date.');

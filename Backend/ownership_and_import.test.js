@@ -323,6 +323,42 @@ test('3alamatak Multi-Teacher Isolation & Import Compatibility Suite', async (t)
       assert.ok(finalView.results.length >= 1);
     });
 
+    await t.test('Advanced analytics is filtered, normalized, thresholded, and owner-scoped', async () => {
+      const headersB = { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenB}` };
+      const assessmentList = await (await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/assessments`, { headers: headersB })).json();
+      const component = assessmentList.find((assessment) => assessment.id === assessmentBId).components[0];
+      const zeroMark = await fetch(`${baseUrl}/api/3alamatak/assessments/${assessmentBId}/marks`, { method: 'PUT', headers: headersB, body: JSON.stringify({ marks: [{ student_id: studentBId, component_id: component.id, score: 0, mark_status: null }] }) });
+      assert.strictEqual(zeroMark.status, 200);
+
+      const analyticsResponse = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/analytics?student_id=${studentBId}`, { headers: headersB });
+      assert.strictEqual(analyticsResponse.status, 200);
+      const analytics = await analyticsResponse.json();
+      assert.ok(Array.isArray(analytics.assessments));
+      assert.ok(Array.isArray(analytics.components));
+      assert.equal(analytics.components[0].assessment_id, assessmentBId);
+      assert.ok(analytics.student_progress);
+      assert.equal(analytics.student_progress.rows[0].percent, 0, 'Zero is a valid numeric result');
+      assert.ok(analytics.definitions.absent.includes('never numeric zero'));
+      assert.ok(analytics.final_grades.available);
+
+      const filtered = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/analytics?period=custom&start_date=2026-01-01&end_date=2026-12-31`, { headers: headersB });
+      assert.strictEqual(filtered.status, 200);
+      const filteredJson = await filtered.json();
+      assert.equal(filteredJson.filter.start_date, '2026-01-01');
+      const invalidFilter = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/analytics?period=custom&start_date=not-a-date`, { headers: headersB });
+      assert.strictEqual(invalidFilter.status, 400);
+
+      const settings = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/analytics/settings`, { headers: headersB });
+      assert.strictEqual(settings.status, 200);
+      const savedSettings = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/analytics/settings`, { method: 'PUT', headers: headersB, body: JSON.stringify({ low_average_threshold: 60, missing_assessments_threshold: 2, completion_threshold: 80, decline_threshold: 5 }) });
+      assert.strictEqual(savedSettings.status, 200);
+      const invalidSettings = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/analytics/settings`, { method: 'PUT', headers: headersB, body: JSON.stringify({ low_average_threshold: 101, missing_assessments_threshold: 0, completion_threshold: 80, decline_threshold: 5 }) });
+      assert.strictEqual(invalidSettings.status, 400);
+
+      const forbidden = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/analytics`, { headers: { Authorization: `Bearer ${tokenA}` } });
+      assert.strictEqual(forbidden.status, 404);
+    });
+
     await t.test('Reports and historical record creation are owner-scoped', async () => {
       const headersB = { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenB}` };
       const createRecord = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/historical-records`, {

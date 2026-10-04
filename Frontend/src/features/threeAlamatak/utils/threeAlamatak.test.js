@@ -30,6 +30,7 @@ import {
 } from './workbookParser.js';
 import { validateAssessmentInput, validateGradebookInput, validateStudentInput } from './validation.js';
 import { toClassUpdatePayload, toEditableClassState } from '../../../pages/classPersistence.js';
+import { analyticsBarWidth, buildAnalyticsDashboardModel, formatAnalyticsPercent } from './analyticsView.js';
 
 test('grade calculations preserve completion and partial states', () => {
   const assessment = {
@@ -368,4 +369,32 @@ test('class persistence maps persisted snake_case start_time to edit state and b
   assert.match(state.startTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
   assert.equal(toClassUpdatePayload(state).start_time, '2026-10-04T10:00:00.000Z');
   assert.throws(() => toClassUpdatePayload(undefined), /scheduled start time/);
+});
+
+test('analytics dashboard view model preserves exact tables, filters, and edge states', () => {
+  assert.equal(formatAnalyticsPercent(0), '0.0%');
+  assert.equal(formatAnalyticsPercent(null), '—');
+  assert.equal(analyticsBarWidth(140), 100);
+  const model = buildAnalyticsDashboardModel({
+    class_average: 0,
+    median: null,
+    summary: { completion_percent: 50, missing_count: 2, absent_count: 1 },
+    assessments: [{ title: 'Quiz', average: 0, median: 0, highest: 0, lowest: 0, completion_percent: 50, missing_count: 1, absent_count: 1 }],
+    components: [{ assessment_title: 'Quiz', name: 'Part A', average_percent: 0, highest_percent: 0, lowest_percent: 0, valid_marks: 1, completion_percent: 50, missing_count: 1, absent_count: 1 }],
+    needs_attention: [{ display_name: 'Aisha', percent: 0, missing_marks: 2, absent_marks: 1, attention_reasons: ['Average 0% — below configured 50% threshold'] }],
+    final_grades: { grade_counts: { U: 1 } },
+    student_progress: { rows: [{ title: 'Quiz', assessment_date: null, percent: 0, recorded_marks: 1, expected_marks: 2, absent_marks: 1 }] },
+  }, 'student-1');
+  assert.equal(model.cards[0][1], '0.0%');
+  assert.equal(model.assessmentRows[0][1], '0.0%');
+  assert.equal(model.attentionRows[0][4], 'Average 0% — below configured 50% threshold');
+  assert.deepEqual(model.finalGradeRows, [['U', 1]]);
+  assert.equal(model.progressRows[0][2], '0.0%');
+});
+
+test('analytics dashboard view model handles empty and unconfigured final-grade states', () => {
+  const model = buildAnalyticsDashboardModel({ final_grades: { available: false }, summary: {} });
+  assert.equal(model.assessmentRows.length, 0);
+  assert.equal(model.componentRows.length, 0);
+  assert.equal(model.finalGradeRows.length, 0);
 });

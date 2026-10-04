@@ -46,6 +46,7 @@ import {
   parseGradebookHtml,
 } from '../features/threeAlamatak/utils/workbookParser';
 import { assessmentState, computeFinalGrade, gradeFor } from '../features/threeAlamatak/utils/gradeCalculations';
+import { analyticsBarWidth, buildAnalyticsDashboardModel, formatAnalyticsPercent } from '../features/threeAlamatak/utils/analyticsView';
 
 const views = [
   ['dashboard', 'Dashboard', LayoutDashboard],
@@ -901,7 +902,7 @@ function WorkspaceView({
         </div>
       )}
       {tab === 'imports' && <ImportHistoryTab gradebookId={gradebookId} imports={importHistory} />}
-      {tab === 'analytics' && <Analytics analytics={analytics} students={students} />}
+      {tab === 'analytics' && <Analytics gradebookId={gradebookId} analytics={analytics} students={students} />}
     </div>
   );
 }
@@ -1200,45 +1201,56 @@ function RecordsTab({ records, students, onAdd, onEdit, onDelete }) {
   );
 }
 
-function Analytics({ analytics, students }) {
-  const summary = analytics?.summary || {};
-  const percent = (value) => value == null ? '—' : `${Number(value).toFixed(1)}%`;
+function Analytics({ gradebookId, analytics, students }) {
+  const [data, setData] = useState(analytics);
+  const [period, setPeriod] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [settings, setSettings] = useState(analytics?.settings || null);
+  const [settingsDraft, setSettingsDraft] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const percent = formatAnalyticsPercent;
+  const load = async (next = {}) => {
+    setBusy(true); setError('');
+    try {
+      const nextData = await threeAlamatakApi.getAnalytics(gradebookId, { period, ...(startDate ? { start_date: startDate } : {}), ...(endDate ? { end_date: endDate } : {}), ...(studentId ? { student_id: studentId } : {}), ...next });
+      setData(nextData); setSettings(nextData.settings); setSettingsDraft(nextData.settings);
+    } catch (loadError) { setError(loadError.message); } finally { setBusy(false); }
+  };
+  useEffect(() => { if (analytics) { setData(analytics); setSettings(analytics.settings); setSettingsDraft(analytics.settings); } }, [analytics]);
+  const saveSettings = async () => { setBusy(true); setError(''); try { const next = await threeAlamatakApi.saveAnalyticsSettings(gradebookId, { ...settingsDraft, low_average_threshold: Number(settingsDraft.low_average_threshold), missing_assessments_threshold: Number(settingsDraft.missing_assessments_threshold), completion_threshold: Number(settingsDraft.completion_threshold), decline_threshold: Number(settingsDraft.decline_threshold) }); setSettings(next); setSettingsDraft(next); await load(); } catch (saveError) { setError(saveError.message); } finally { setBusy(false); } };
+  const summary = data?.summary || {};
+  const selectedProgress = data?.student_progress?.rows || [];
+  const model = buildAnalyticsDashboardModel(data, studentId);
+  const chart = (items, valueKey = 'average') => <div className="space-y-2 px-4 py-3">{items.map((item) => <div key={`${item.assessment_id || item.id}-${item.title || item.name}`}><div className="flex justify-between gap-3 text-xs"><span className="truncate">{item.title || item.name}</span><span className="font-bold">{percent(item[valueKey])}</span></div><div className="mt-1 h-2 rounded bg-slate-100"><div className="h-2 rounded bg-teal-600" style={{ width: `${Math.max(0, Math.min(100, Number(item[valueKey] || 0)))}%` }} /></div></div>)}</div>;
+  if (!data) return <div className="p-5 text-sm text-slate-500">Analytics are loading…</div>;
   return (
     <div className="space-y-5 p-5">
-      <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Class average" value={percent(analytics?.class_average)} />
-        <Stat label="Median" value={percent(analytics?.median)} />
-        <Stat label="Highest" value={percent(analytics?.highest)} />
-        <Stat label="Lowest" value={percent(analytics?.lowest)} />
-        <Stat label="Assessed" value={`${summary.assessed_students || 0}/${summary.students || students.length}`} />
-        <Stat label="Completion" value={percent(summary.completion_percent)} />
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs font-bold">Scope<select value={period} onChange={(event) => setPeriod(event.target.value)} className="mt-1 block min-h-9 rounded-lg border border-slate-200 px-2"><option value="all">All assessments</option><option value="custom">Custom date range</option></select></label>
+          <label className="text-xs font-bold">Start date<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} disabled={period !== 'custom'} className="mt-1 block min-h-9 rounded-lg border border-slate-200 px-2 disabled:bg-slate-50" /></label>
+          <label className="text-xs font-bold">End date<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} disabled={period !== 'custom'} className="mt-1 block min-h-9 rounded-lg border border-slate-200 px-2 disabled:bg-slate-50" /></label>
+          <label className="text-xs font-bold">Student progress<select value={studentId} onChange={(event) => { setStudentId(event.target.value); load({ student_id: event.target.value || undefined }); }} className="mt-1 block min-h-9 rounded-lg border border-slate-200 px-2"><option value="">Class trend</option>{students.map((student) => <option key={student.id} value={student.id}>{student.display_name}</option>)}</select></label>
+          <button type="button" onClick={() => load()} disabled={busy} className="min-h-9 rounded-lg bg-teal-700 px-4 text-xs font-bold text-white disabled:opacity-50">{busy ? 'Loading…' : 'Apply filters'}</button>
+        </div>
+        <p className="mt-3 text-xs font-bold text-teal-700">Active filter: {data.filter?.label || 'All assessments'}</p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-7">
+        {model.cards.map(([label, value]) => <Stat key={label} label={label} value={value} />)}
       </div>
       <div className="grid gap-5 lg:grid-cols-2">
-        <AnalyticsPanel title="Performance distribution">
-          <SimpleTable headers={['Band', 'Students', 'Percent']} rows={(analytics?.distribution || []).map((band) => [band.label, band.count, percent(band.percent)])} />
-        </AnalyticsPanel>
-        <AnalyticsPanel title="Needs attention">
-          <SimpleTable headers={['Student', 'Average', 'Missing', 'Absent']} rows={(analytics?.needs_attention || []).slice(0, 10).map((row) => [row.display_name, percent(row.percent), row.missing_marks, row.absent_marks])} />
-        </AnalyticsPanel>
+        <AnalyticsPanel title="Grade / score distribution"><div className="px-4 pt-3">{(data.distribution || []).map((band) => <div key={band.label} className="mb-2"><div className="flex justify-between text-xs"><span>{band.label}</span><span>{band.count} · {percent(band.percent)}</span></div><div className="mt-1 h-3 rounded bg-slate-100"><div className="h-3 rounded bg-indigo-500" style={{ width: `${analyticsBarWidth(band.percent)}%` }} /></div></div>)}</div><SimpleTable headers={['Band', 'Students', 'Percent']} rows={(data.distribution || []).map((band) => [band.label, band.count, percent(band.percent)])} /></AnalyticsPanel>
+        <AnalyticsPanel title="Needs attention"><SimpleTable headers={['Student', 'Average', 'Missing', 'Absent', 'Why']} rows={model.attentionRows.slice(0, 15)} /></AnalyticsPanel>
       </div>
-      <AnalyticsPanel title="Assessment analytics">
-        <SimpleTable headers={['Assessment', 'Average', 'Highest', 'Lowest', 'Completion', 'Missing', 'Absent']} rows={(analytics?.assessments || []).map((assessment) => [assessment.title, percent(assessment.average), percent(assessment.highest), percent(assessment.lowest), percent(assessment.completion_percent), assessment.missing_count, assessment.absent_count])} />
-      </AnalyticsPanel>
-      <AnalyticsPanel title="Component analytics">
-        <SimpleTable headers={['Component', 'Average', 'Highest', 'Lowest', 'Completion', 'Missing']} rows={(analytics?.components || []).map((component) => [`${component.assessment_title} · ${component.name}`, percent(component.average_percent), component.highest == null ? '—' : component.highest, component.lowest == null ? '—' : component.lowest, percent(component.completion_percent), component.missing_count])} />
-      </AnalyticsPanel>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <AnalyticsPanel title="Progress">
-          <SimpleTable headers={['Assessment', 'Class average']} rows={(analytics?.progress || []).map((item) => [item.title, percent(item.average)])} />
-        </AnalyticsPanel>
-        <AnalyticsPanel title="Strongest / weakest components">
-          <div className="grid gap-3 p-3 text-sm sm:grid-cols-2">
-            <div><p className="font-black text-emerald-700">Strongest</p>{(analytics?.strongest_components || []).map((item) => <p key={`strong-${item.id}`} className="mt-1 text-slate-600">{item.name}: {percent(item.average_percent)}</p>)}</div>
-            <div><p className="font-black text-red-700">Weakest</p>{(analytics?.weakest_components || []).map((item) => <p key={`weak-${item.id}`} className="mt-1 text-slate-600">{item.name}: {percent(item.average_percent)}</p>)}</div>
-          </div>
-        </AnalyticsPanel>
-      </div>
-      <p className="text-xs text-slate-500">Analytics exclude blank and status-only marks from numeric averages. Zero is a valid mark; Absent and NA count toward completion/status tracking but not as zero.</p>
+      <AnalyticsPanel title="Assessment comparison and class performance over assessment order"><div className="px-4 pt-3 text-xs text-slate-500">Percentages are normalized by component maximums. This is assessment performance over time, not a modeled academic trajectory.</div>{chart(data.progress || [])}<SimpleTable headers={['Assessment', 'Average', 'Median', 'Highest', 'Lowest', 'Completion', 'Missing', 'Absent']} rows={model.assessmentRows} /></AnalyticsPanel>
+      <AnalyticsPanel title="Component analytics"><SimpleTable headers={['Component', 'Average', 'Highest', 'Lowest', 'Valid marks', 'Completion', 'Missing', 'Absent']} rows={model.componentRows} /></AnalyticsPanel>
+      <div className="grid gap-5 lg:grid-cols-2"><AnalyticsPanel title="Strongest / weakest areas"><div className="grid gap-3 p-4 text-sm sm:grid-cols-2"><div><p className="font-black text-emerald-700">Strongest</p>{(data.strongest_components || []).map((item) => <p key={`strong-${item.id}`} className="mt-1">{item.name}: {percent(item.average_percent)} ({item.valid_marks} valid)</p>)}</div><div><p className="font-black text-red-700">Weakest</p>{(data.weakest_components || []).map((item) => <p key={`weak-${item.id}`} className="mt-1">{item.name}: {percent(item.average_percent)} ({item.valid_marks} valid)</p>)}</div></div></AnalyticsPanel><AnalyticsPanel title={studentId ? `Student progress: ${students.find((item) => String(item.id) === String(studentId))?.display_name || ''}` : 'Student progress'}>{studentId ? <><SimpleTable headers={['Assessment', 'Date', 'Percent', 'Recorded', 'Absent']} rows={selectedProgress.map((item) => [item.title, item.assessment_date || '—', percent(item.percent), `${item.recorded_marks}/${item.expected_marks}`, item.absent_marks])} />{selectedProgress.length > 0 && chart(selectedProgress, 'percent')}</> : <p className="p-4 text-sm text-slate-500">Select a student to view chronological progress. One assessment is not treated as a trend.</p>}</AnalyticsPanel></div>
+      <div className="grid gap-5 lg:grid-cols-2"><AnalyticsPanel title="Final-grade analytics">{data.final_grades?.available ? <><div className="grid gap-3 p-4 sm:grid-cols-3"><Stat label="Overall average" value={percent(data.final_grades.overall_average)} /><Stat label="Ready" value={data.final_grades.ready} /><Stat label="Not ready" value={data.final_grades.not_ready} /></div><SimpleTable headers={['Final grade', 'Students']} rows={model.finalGradeRows} /></> : <p className="p-4 text-sm text-slate-500">{data.final_grades?.reason || 'Final grades are unavailable.'}</p>}</AnalyticsPanel><AnalyticsPanel title="Attention thresholds"><div className="grid gap-3 p-4 sm:grid-cols-2"><label className="text-xs font-bold">Low average %<input type="number" min="0" max="100" value={settingsDraft?.low_average_threshold ?? ''} onChange={(event) => setSettingsDraft({ ...settingsDraft, low_average_threshold: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 px-2 py-1" /></label><label className="text-xs font-bold">Missing marks threshold<input type="number" min="1" value={settingsDraft?.missing_assessments_threshold ?? ''} onChange={(event) => setSettingsDraft({ ...settingsDraft, missing_assessments_threshold: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 px-2 py-1" /></label><label className="text-xs font-bold">Completion %<input type="number" min="0" max="100" value={settingsDraft?.completion_threshold ?? ''} onChange={(event) => setSettingsDraft({ ...settingsDraft, completion_threshold: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 px-2 py-1" /></label><label className="text-xs font-bold">Decline points<input type="number" min="0.1" step="0.1" max="100" value={settingsDraft?.decline_threshold ?? ''} onChange={(event) => setSettingsDraft({ ...settingsDraft, decline_threshold: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 px-2 py-1" /></label></div><button type="button" onClick={saveSettings} disabled={busy || !settingsDraft} className="mx-4 mb-4 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Save thresholds</button></AnalyticsPanel></div>
+      {error && <p className="text-sm font-bold text-red-700">{error}</p>}
+      <p className="text-xs text-slate-500">Definitions: average and median use valid numeric marks only. Completion includes recorded status values. Absent is never zero; missing means no mark/status; zero is a valid numeric result.</p>
     </div>
   );
 }

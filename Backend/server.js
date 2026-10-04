@@ -1208,7 +1208,7 @@ app.get('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeache
     if (!assessment) return res.status(404).json({ message: 'Assessment not found.' });
     const [marks] = await db.query(
       `SELECT m.id, m.component_id, m.student_id, m.score, m.mark_status,
-              m.comment, m.follow_up_required
+              m.comment, m.follow_up_required, m.provenance
        FROM alamatak_marks m
        JOIN alamatak_assessment_components c ON c.id = m.component_id
        WHERE c.assessment_id = ?`,
@@ -1279,35 +1279,92 @@ app.get('/api/3alamatak/gradebooks/:id/analytics', verifyToken, requireActiveTea
   try {
     const gradebook = await getAlamatakGradebook(req, req.params.id);
     if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
-    const [summary] = await db.query(
-      `SELECT
-         (SELECT COUNT(*) FROM alamatak_students WHERE gradebook_id = ? AND status <> 'archived') AS students,
-         (SELECT COUNT(*) FROM alamatak_assessments WHERE gradebook_id = ?) AS assessments,
-         (SELECT COUNT(*) FROM alamatak_marks m JOIN alamatak_assessment_components c ON c.id = m.component_id JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ?) AS recorded_marks`,
-      [gradebook.id, gradebook.id, gradebook.id]
-    );
-    const [averages] = await db.query(
-      `SELECT s.id AS student_id, s.display_name,
-              SUM(m.score) AS score, SUM(c.maximum_score) AS maximum_score
-       FROM alamatak_students s
-       LEFT JOIN alamatak_marks m ON m.student_id = s.id
-       LEFT JOIN alamatak_assessment_components c ON c.id = m.component_id
-       WHERE s.gradebook_id = ? AND s.status <> 'archived'
-       GROUP BY s.id, s.display_name
-       ORDER BY s.display_name`,
+    const [students] = await db.query('SELECT id, display_name FROM alamatak_students WHERE gradebook_id = ? AND status <> \'archived\' ORDER BY display_name', [gradebook.id]);
+    const [assessments] = await db.query(
+      `SELECT a.id, a.title, a.assessment_date, c.id AS component_id, c.name AS component_name, c.maximum_score
+       FROM alamatak_assessments a
+       JOIN alamatak_assessment_components c ON c.assessment_id = a.id
+       WHERE a.gradebook_id = ? ORDER BY a.assessment_date IS NULL, a.assessment_date, a.id, c.sort_order, c.id`,
       [gradebook.id]
     );
-    const rows = averages.map((row) => ({
-      ...row,
-      percent: row.maximum_score > 0 ? Number(row.score || 0) / Number(row.maximum_score) * 100 : null,
-    }));
+    const [marks] = await db.query(
+      `SELECT m.student_id, m.component_id, m.score, m.mark_status
+       FROM alamatak_marks m
+       JOIN alamatak_assessment_components c ON c.id = m.component_id
+       JOIN alamatak_assessments a ON a.id = c.assessment_id
+       WHERE a.gradebook_id = ?`,
+      [gradebook.id]
+    );
+    const median = (values) => {
+      const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+      if (!sorted.length) return null;
+      const middle = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+    };
+    const numeric = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
+    const markMap = new Map(marks.map((mark) => [`${mark.student_id}:${mark.component_id}`, mark]));
+    const assessmentMap = new Map();
+    assessments.forEach((row) => {
+      if (!assessmentMap.has(row.id)) assessmentMap.set(row.id, { id: row.id, title: row.title, assessment_date: row.assessment_date, components: [] });
+      assessmentMap.get(row.id).components.push({ id: row.component_id, name: row.component_name, maximum_score: Number(row.maximum_score) });
+    });
+    const assessmentAnalytics = [...assessmentMap.values()].map((assessment) => {
+      const entries = students.flatMap((student) => assessment.components.map((component) => markMap.get(`${student.id}:${component.id}`)).filter(Boolean));
+      const numericEntries = entries.filter((entry) => numeric(entry.score));
+      const percentages = numericEntries.map((entry) => {
+        const component = assessment.components.find((item) => item.id === entry.component_id);
+        return component?.maximum_score ? Number(entry.score) / component.maximum_score * 100 : null;
+      }).filter((value) => value !== null);
+      const expected = students.length * assessment.components.length;
+      return {
+        ...assessment,
+        average: percentages.length ? percentages.reduce((sum, value) => sum + value, 0) / percentages.length : null,
+        highest: percentages.length ? Math.max(...percentages) : null,
+        lowest: percentages.length ? Math.min(...percentages) : null,
+        median: median(percentages),
+        expected_marks: expected,
+        recorded_marks: entries.length,
+        completion_percent: expected ? entries.length / expected * 100 : null,
+        missing_count: Math.max(0, expected - entries.length),
+        absent_count: entries.filter((entry) => String(entry.mark_status || '').toLowerCase() === 'absent').length,
+        status_count: entries.filter((entry) => entry.mark_status && String(entry.mark_status).toLowerCase() !== 'absent').length,
+        distribution: { below_50: percentages.filter((value) => value < 50).length, from_50_to_74: percentages.filter((value) => value >= 50 && value < 75).length, from_75_to_89: percentages.filter((value) => value >= 75 && value < 90).length, above_90: percentages.filter((value) => value >= 90).length },
+      };
+    });
+    const componentAnalytics = assessments.map((component) => {
+      const entries = students.map((student) => markMap.get(`${student.id}:${component.component_id}`)).filter(Boolean);
+      const values = entries.filter((entry) => numeric(entry.score)).map((entry) => Number(entry.score));
+      const maximum = Number(component.maximum_score);
+      return { id: component.component_id, name: component.component_name, assessment_id: component.id, assessment_title: component.title, maximum_score: maximum, average: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, average_percent: values.length && maximum ? values.reduce((sum, value) => sum + value, 0) / values.length / maximum * 100 : null, highest: values.length ? Math.max(...values) : null, lowest: values.length ? Math.min(...values) : null, completion_percent: students.length ? entries.length / students.length * 100 : null, missing_count: Math.max(0, students.length - entries.length), absent_count: entries.filter((entry) => String(entry.mark_status || '').toLowerCase() === 'absent').length };
+    });
+    const rows = students.map((student) => {
+      const entries = assessments.map((component) => markMap.get(`${student.id}:${component.component_id}`));
+      const numericEntries = entries.filter((entry) => entry && numeric(entry.score));
+      const possible = numericEntries.reduce((sum, entry) => sum + Number(assessments.find((item) => item.component_id === entry.component_id)?.maximum_score || 0), 0);
+      const score = numericEntries.reduce((sum, entry) => sum + Number(entry.score), 0);
+      return { student_id: student.id, display_name: student.display_name, score, maximum_score: possible, percent: possible ? score / possible * 100 : null, expected_marks: assessments.length, recorded_marks: entries.filter(Boolean).length, missing_marks: assessments.length - entries.filter(Boolean).length, absent_marks: entries.filter((entry) => String(entry?.mark_status || '').toLowerCase() === 'absent').length, incomplete_assessments: assessmentAnalytics.filter((assessment) => assessment.components.some((component) => !markMap.has(`${student.id}:${component.id}`))).length };
+    });
     const populated = rows.filter((row) => row.percent !== null);
+    const bands = [
+      ['Below 50%', (value) => value < 50], ['50–74%', (value) => value >= 50 && value < 75], ['75–89%', (value) => value >= 75 && value < 90], ['90–100%', (value) => value >= 90],
+    ].map(([label, predicate]) => ({ label, count: populated.filter((row) => predicate(row.percent)).length }));
+    const recordedMarks = marks.length;
+    const expectedMarks = students.length * assessments.length;
     res.json({
-      summary: summary[0],
+      summary: { students: students.length, assessments: assessmentMap.size, recorded_marks: recordedMarks, expected_marks: expectedMarks, assessed_students: populated.length, unassessed_students: students.length - populated.length, completion_percent: expectedMarks ? recordedMarks / expectedMarks * 100 : null },
       students: rows,
       class_average: populated.length ? populated.reduce((sum, row) => sum + row.percent, 0) / populated.length : null,
       highest: populated.length ? Math.max(...populated.map((row) => row.percent)) : null,
       lowest: populated.length ? Math.min(...populated.map((row) => row.percent)) : null,
+      median: median(populated.map((row) => row.percent)),
+      range: populated.length ? Math.max(...populated.map((row) => row.percent)) - Math.min(...populated.map((row) => row.percent)) : null,
+      distribution: bands.map((band) => ({ ...band, percent: students.length ? band.count / students.length * 100 : 0 })),
+      assessments: assessmentAnalytics,
+      components: componentAnalytics,
+      strongest_components: [...componentAnalytics].filter((item) => item.average_percent !== null).sort((a, b) => b.average_percent - a.average_percent).slice(0, 5),
+      weakest_components: [...componentAnalytics].filter((item) => item.average_percent !== null).sort((a, b) => a.average_percent - b.average_percent).slice(0, 5),
+      progress: assessmentAnalytics.filter((item) => item.average !== null).map((item) => ({ assessment_id: item.id, title: item.title, assessment_date: item.assessment_date, average: item.average })),
+      needs_attention: rows.filter((row) => row.percent === null || row.missing_marks > 0 || row.absent_marks > 0).sort((a, b) => (a.percent ?? -1) - (b.percent ?? -1)),
     });
   } catch (error) {
     console.error('3alamatak analytics error:', error);

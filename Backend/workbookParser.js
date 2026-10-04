@@ -52,6 +52,16 @@ function importedNameScore(firstName, secondName) {
   const second = tokens(secondName);
   if (!first.length || !second.length) return 0;
   if (first.join(' ') === second.join(' ')) return 1;
+  if ([...first].sort().join(' ') === [...second].sort().join(' ')) return 0.98;
+  const sharedTokens = first.filter((token) => second.includes(token));
+  const shorter = Math.min(first.length, second.length);
+  if (shorter >= 2 && sharedTokens.length === shorter) {
+    return 0.92 + Math.min(0.06, sharedTokens.length / Math.max(first.length, second.length) * 0.06);
+  }
+  if (first.length >= 2 && second.length >= 2 && first[0] === second[0]) {
+    const surnameSimilarity = tokenSimilarity(first.at(-1), second.at(-1));
+    if (first[0].length >= 5 && surnameSimilarity >= 0.7 && first.at(-1).slice(0, 3) === second.at(-1).slice(0, 3)) return 0.9 + Math.min(0.07, surnameSimilarity * 0.07);
+  }
 
   const firstSimilarity = tokenSimilarity(first[0], second[0]);
   const lastSimilarity = tokenSimilarity(first.at(-1), second.at(-1));
@@ -80,6 +90,13 @@ function findConfidentNameMatch(roster, name, externalId = '') {
   const exact = roster.filter((student) => normalizeImportedName(student.display_name || student.name) === normalized);
   if (exact.length === 1) return { item: exact[0], score: 1, mode: 'exact' };
   if (exact.length > 1) return { item: null, score: 1, mode: 'ambiguous-exact' };
+
+  const inputTokens = tokens(name);
+  if (inputTokens.length === 1) {
+    const tokenMatches = roster.filter((student) => tokens(student.display_name || student.name).includes(inputTokens[0]));
+    if (tokenMatches.length === 1) return { item: tokenMatches[0], score: 0.93, mode: 'unique-token' };
+    if (tokenMatches.length > 1) return { item: null, score: 0.75, mode: 'ambiguous-token' };
+  }
 
   const scored = roster
     .map((student) => ({ item: student, score: importedNameScore(student.display_name || student.name, name) }))
@@ -135,6 +152,17 @@ function matchImportedRoster(existingStudents = [], importedStudents = []) {
         resolution: '',
         include: true,
       };
+    }
+
+    const inputTokens = tokens(importedName);
+    if (inputTokens.length === 1) {
+      const tokenMatches = existingStudents.filter((student) => tokens(student.display_name || student.name).includes(inputTokens[0]));
+      if (tokenMatches.length === 1) {
+        return { ...imported, status: 'fuzzy', mode: 'unique-token', matchedStudent: tokenMatches[0], score: 0.93, candidates: [tokenMatches[0]], resolution: String(tokenMatches[0].id), include: true };
+      }
+      if (tokenMatches.length > 1) {
+        return { ...imported, status: 'ambiguous', mode: 'ambiguous-token', matchedStudent: null, score: 0.75, candidates: tokenMatches, resolution: '', include: true };
+      }
     }
 
     const scored = existingStudents
@@ -282,6 +310,13 @@ function isStudentCell(value, row = [], nameCol = -1) {
   if (!text || text.length < 2 || text.length > 50 || /\d|[\/%:;=@]/.test(text)) return false;
   if (/^(?:name|student|all students?|level|mark|marks|total|absent|na|ns|p)$/i.test(text)) return false;
   return row.some((cell, index) => index !== nameCol && ['number', 'status'].includes(parseImportedNumeric(cell).type));
+}
+
+function isRosterNameCell(value) {
+  const text = cellText(value);
+  if (!text || text.length > 120 || /\d|[\/%:;=@]/.test(text)) return false;
+  if (isNameHeader(text) || isMetricLabel(text)) return false;
+  return !/^(?:excellent|average|above average|begginer|beginner|level|team|members?)$/i.test(text);
 }
 
 function hasAssessmentStructure(rows) {
@@ -437,6 +472,7 @@ function classifyWorksheet(sheet) {
   if (/^social$/i.test(name)) return { type: 'mixed', label: 'Grades + Behavior', selected: true };
   if (/^(list of teams|gp projects 2026)$/i.test(name)) return { type: 'team-projects', label: 'Team Projects', selected: true };
   if (/^tp groups$/i.test(name)) return { type: 'team-projects', label: 'Team Projects / Groups', selected: true };
+  if (/^(tp|rp|ir)$/i.test(name)) return { type: 'reference', label: 'Rubric / Reference Data', selected: false };
   if (/^ir submission$/i.test(name)) return { type: 'assignments', label: 'Assignments / Submission Tracker', selected: true };
   if (/grade.?threshold/i.test(lowerName)) return { type: 'threshold', label: 'Grade Threshold Scheme', selected: true };
   if (/criteria|email list/i.test(lowerName)) return { type: 'reference', label: 'Reference / Criteria', selected: false };
@@ -470,7 +506,11 @@ function identifyCanonicalRosterPlans(plans) {
 
 function canonicalRosterFromPlans(plans) {
   const candidates = identifyCanonicalRosterPlans(plans);
-  const rosterPlans = candidates.length ? candidates : plans.filter((plan) => plan.selected && plan.type === 'grades');
+  const authoritativeRoster = candidates.some((plan) => /^(sheet1|sheet3)$/i.test(plan.name));
+  const rosterPlans = [...new Map([
+    ...candidates,
+    ...(authoritativeRoster ? [] : plans.filter((plan) => plan.selected && plan.type === 'grades')),
+  ].map((plan) => [plan.name, plan])).values()];
   const byId = new Map();
   const byName = new Map();
   for (const plan of rosterPlans) {
@@ -490,7 +530,7 @@ function canonicalRosterFromPlans(plans) {
     for (const row of sourceRows) {
       const cells = row.map(cellText);
       const name = cells.length === 1 ? cells[0] : cells[0] || cells.find((cell) => cell && !/@/.test(cell) && !/^\w[-\w]+$/.test(cell)) || '';
-      if (!name || !isStudentCell(name, cells, 0)) continue;
+      if (!name || (plan.type === 'students' ? !isRosterNameCell(name) : !isStudentCell(name, cells, 0))) continue;
       const externalId = cells.find((cell) => cell && /^\w[-\w]+$/.test(cell) && !/@/.test(cell)) || null;
       const email = cells.find((cell) => /@/.test(cell)) || null;
       const candidate = {
@@ -500,13 +540,15 @@ function canonicalRosterFromPlans(plans) {
         last_name: name.split(/\s+/).slice(1).join(' '),
         external_student_id: externalId,
         email,
+        source_sheets: [plan.name],
       };
       const normalized = normalizeImportedName(name);
       const duplicate = (externalId && byId.get(String(externalId))) || byName.get(normalized) ||
-        Array.from(byName.values()).find((item) => importedNameScore(item.display_name, name) >= 0.95);
+        Array.from(byName.values()).find((item) => importedNameScore(item.display_name, name) >= 0.92);
       if (duplicate) {
         if (!duplicate.external_student_id && externalId) duplicate.external_student_id = externalId;
         if (!duplicate.email && email) duplicate.email = email;
+        duplicate.source_sheets = [...new Set([...(duplicate.source_sheets || []), plan.name])];
         continue;
       }
       byName.set(normalized, candidate);
@@ -518,9 +560,20 @@ function canonicalRosterFromPlans(plans) {
 
 function resolvePackageReferences(roster, assessments, historicalRecords) {
   const unresolved = [];
+  const matches = [];
   const resolve = (reference) => {
     const match = findConfidentNameMatch(roster, reference.payload?.student_name || reference.display_name || reference.student_key || '', reference.external_student_id || '');
-    if (match.item) return { ...reference, student_key: match.item.key };
+    if (match.item) {
+      matches.push({
+        source_sheet: reference.source_sheet || reference.payload?.source_sheet || null,
+        original_name: reference.display_name || reference.student_key || reference.payload?.student_name || '',
+        canonical_name: match.item.display_name || match.item.name,
+        score: match.score,
+        mode: match.mode,
+        component_index: reference.component_index,
+      });
+      return { ...reference, student_key: match.item.key };
+    }
     unresolved.push({ student_key: reference.student_key, mode: match.mode, score: match.score });
     return { ...reference, student_key: null };
   };
@@ -529,7 +582,7 @@ function resolvePackageReferences(roster, assessments, historicalRecords) {
     marks: (assessment.marks || []).map((mark) => resolve(mark)),
   }));
   const nextHistory = historicalRecords.map((record) => resolve(record));
-  return { assessments: nextAssessments, historicalRecords: nextHistory, unresolved };
+  return { assessments: nextAssessments, historicalRecords: nextHistory, unresolved, matches };
 }
 
 function canonicalAssessmentIdentity(assessment) {
@@ -557,6 +610,7 @@ function deduplicateAssessments(assessments) {
       if (!marks.has(key) || (marks.get(key).score == null && mark.score != null)) marks.set(key, mark);
     }
     existing.marks = [...marks.values()];
+    existing.orphan_marks = [...(existing.orphan_marks || []), ...(assessment.orphan_marks || [])];
     existing.source_sheets = [...new Set([...(existing.source_sheets || []), ...(assessment.source_sheets || []), assessment.source_sheet].filter(Boolean))];
   }
   return [...byIdentity.values()];
@@ -673,7 +727,7 @@ function extractAssessmentBlocks(sheet, roster = [], unmatched = new Set(), year
         }
       }
       const maxVal = info.markRow >= 0 ? parseImportedNumeric(rows[info.markRow]?.[c]).value : null;
-      if (isAggregateLabel(label) || !label) continue;
+      if (isAggregateLabel(label) || /^\d{3,}$/.test(label) || !label) continue;
 
       const hasMax = typeof maxVal === 'number' && maxVal > 0;
       let numericCount = 0;
@@ -694,10 +748,17 @@ function extractAssessmentBlocks(sheet, roster = [], unmatched = new Set(), year
 
     const topic = inferAssessmentTopic(sheet.name, title);
     const marks = [];
+    const orphanMarks = [];
 
     for (let r = info.dataStart; r < rows.length; r++) {
       const rawName = cellText(rows[r]?.[b.nameCol]);
-      if (!rawName) continue;
+      if (!rawName) {
+        componentDefs.forEach((def, compIndex) => {
+          const parsed = parseImportedNumeric(rows[r]?.[def.col]);
+          if (parsed.type === 'number' || parsed.type === 'status') orphanMarks.push({ source_sheet: sheet.name, source_row: r + 1, component_index: compIndex, score: parsed.type === 'number' ? parsed.value : null, mark_status: parsed.type === 'status' ? parsed.value : null });
+        });
+        continue;
+      }
       if (!isStudentCell(rawName, rows[r] || [], b.nameCol)) continue;
       const externalId = b.idCol >= 0 ? cellText(rows[r]?.[b.idCol]) : '';
 
@@ -708,6 +769,8 @@ function extractAssessmentBlocks(sheet, roster = [], unmatched = new Set(), year
             student_key: rawName,
             external_student_id: externalId || null,
             display_name: rawName,
+            source_sheet: sheet.name,
+            source_row: r + 1,
             component_index: compIndex,
             score: parsed.type === 'number' ? parsed.value : null,
             mark_status: parsed.type === 'status' ? parsed.value : null,
@@ -725,6 +788,7 @@ function extractAssessmentBlocks(sheet, roster = [], unmatched = new Set(), year
       source_year: year || null,
       components: componentDefs.map((def) => ({ name: def.name, maximum_score: def.maximum_score })),
       marks,
+      orphan_marks: orphanMarks,
     });
   }
 
@@ -829,7 +893,24 @@ function parseTeamProjectsSheet(sheet) {
   const name = sheet.name;
   const projects = [];
 
-  if (/^list of teams$/i.test(name)) {
+  if (/^tp groups$/i.test(name)) {
+    for (let r = 1; r < rows.length; r += 1) {
+      const team = cellText(rows[r]?.[0]);
+      if (!/^\d+$/.test(team)) continue;
+      const member = cellText(rows[r]?.[1]);
+      if (!member || !isRosterNameCell(member)) continue;
+      projects.push({
+        team_number: team,
+        members: [member],
+        leader: cellText(rows[r]?.[2]),
+        topic: cellText(rows[r]?.[3]),
+        issue: cellText(rows[r]?.[4]),
+        aim: cellText(rows[r]?.[5]),
+        action_plan: cellText(rows[r]?.[6]),
+        source_sheet: name,
+      });
+    }
+  } else if (/^list of teams$/i.test(name)) {
     let cur = null;
     for (let r = 1; r < rows.length; r++) {
       const team = cellText(rows[r]?.[0]);
@@ -966,12 +1047,14 @@ function buildWorkbookImportPackage(sheets, fileName = '', options = {}) {
     schemes,
     assessments: resolved.assessments,
     historical_records: resolved.historicalRecords,
-    diagnostics: { unresolved_references: resolved.unresolved },
+    diagnostics: { unresolved_references: resolved.unresolved, matches: resolved.matches, orphan_marks: deduplicateAssessments(assessments).flatMap((assessment) => assessment.orphan_marks || []) },
     summary: {
       totalSheets: plans.length,
       selectedSheets: selectedPlans.length,
       studentsCount: extractedStudents.length,
       assessmentsCount: assessments.length,
+      logicalAssessmentsCount: resolved.assessments.length,
+      duplicateAssessmentsMerged: Math.max(0, assessments.length - resolved.assessments.length),
       schemesCount: schemes.length,
       historicalCount: historicalRecords.length,
     },

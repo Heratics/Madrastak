@@ -103,6 +103,13 @@ function isStudentCell(value, row = [], nameCol = -1) {
   return row.some((cell, index) => index !== nameCol && ['number', 'status'].includes(parseImportedNumeric(cell).type));
 }
 
+function isRosterNameCell(value) {
+  const text = cellText(value);
+  if (!text || text.length > 120 || /\d|[\/%:;=@]/.test(text)) return false;
+  if (isNameHeader(text) || isMetricLabel(text)) return false;
+  return !/^(?:excellent|average|above average|begginer|beginner|level|team|members?)$/i.test(text);
+}
+
 export function findNameBlocks(rows, options = {}) {
   const blocks = [];
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
@@ -244,6 +251,7 @@ export function classifyWorksheet(sheet) {
   if (/^social$/i.test(name)) return { type: 'mixed', label: 'Grades + Behavior', selected: true };
   if (/^(list of teams|gp projects 2026)$/i.test(name)) return { type: 'team-projects', label: 'Team Projects', selected: true };
   if (/^tp groups$/i.test(name)) return { type: 'team-projects', label: 'Team Projects / Groups', selected: true };
+  if (/^(tp|rp|ir)$/i.test(name)) return { type: 'reference', label: 'Rubric / Reference Data', selected: false };
   if (/^ir submission$/i.test(name)) return { type: 'assignments', label: 'Assignments / Submission Tracker', selected: true };
   if (/grade.?threshold/i.test(lowerName)) return { type: 'threshold', label: 'Grade Threshold Scheme', selected: true };
   if (/criteria|email list/i.test(lowerName)) return { type: 'reference', label: 'Reference / Criteria', selected: false };
@@ -271,7 +279,8 @@ function identifyCanonicalRosterPlans(plans) {
 
 function canonicalRosterFromPlans(plans) {
   const candidates = identifyCanonicalRosterPlans(plans);
-  const rosterPlans = candidates.length ? candidates : plans.filter((plan) => plan.selected && plan.type === 'grades');
+  const authoritativeRoster = candidates.some((plan) => /^(sheet1|sheet3)$/i.test(plan.name));
+  const rosterPlans = [...new Map([...candidates, ...(authoritativeRoster ? [] : plans.filter((plan) => plan.selected && plan.type === 'grades'))].map((plan) => [plan.name, plan])).values()];
   const byId = new Map();
   const byName = new Map();
   for (const plan of rosterPlans) {
@@ -291,7 +300,7 @@ function canonicalRosterFromPlans(plans) {
     for (const row of sourceRows) {
       const cells = row.map(cellText);
       const name = cells.length === 1 ? cells[0] : cells[0] || cells.find((cell) => cell && !/@/.test(cell) && !/^\w[-\w]+$/.test(cell)) || '';
-      if (!name || !isStudentCell(name, cells, 0)) continue;
+      if (!name || (plan.type === 'students' ? !isRosterNameCell(name) : !isStudentCell(name, cells, 0))) continue;
       const externalId = cells.find((cell) => cell && /^\w[-\w]+$/.test(cell) && !/@/.test(cell)) || null;
       const email = cells.find((cell) => /@/.test(cell)) || null;
       const candidate = {
@@ -304,7 +313,7 @@ function canonicalRosterFromPlans(plans) {
       };
       const normalized = normalizeImportedName(name);
       const duplicate = (externalId && byId.get(String(externalId))) || byName.get(normalized) ||
-        Array.from(byName.values()).find((item) => importedNameScore(item.display_name, name) >= 0.95);
+        Array.from(byName.values()).find((item) => importedNameScore(item.display_name, name) >= 0.92);
       if (duplicate) {
         if (!duplicate.external_student_id && externalId) duplicate.external_student_id = externalId;
         if (!duplicate.email && email) duplicate.email = email;
@@ -473,7 +482,7 @@ export function extractAssessmentBlocks(sheet, roster = [], unmatched = new Set(
         }
       }
       const maxVal = info.markRow >= 0 ? parseImportedNumeric(rows[info.markRow]?.[c]).value : null;
-      if (isAggregateLabel(label) || !label) continue;
+      if (isAggregateLabel(label) || /^\d{3,}$/.test(label) || !label) continue;
 
       const hasMax = typeof maxVal === 'number' && maxVal > 0;
       let numericCount = 0;
@@ -508,6 +517,8 @@ export function extractAssessmentBlocks(sheet, roster = [], unmatched = new Set(
             student_key: rawName,
             external_student_id: externalId || null,
             display_name: rawName,
+            source_sheet: sheet.name,
+            source_row: r + 1,
             component_index: compIndex,
             score: parsed.type === 'number' ? parsed.value : null,
             mark_status: parsed.type === 'status' ? parsed.value : null,
@@ -629,7 +640,14 @@ export function parseTeamProjectsSheet(sheet) {
   const name = sheet.name;
   const projects = [];
 
-  if (/^list of teams$/i.test(name)) {
+  if (/^tp groups$/i.test(name)) {
+    for (let r = 1; r < rows.length; r += 1) {
+      const team = cellText(rows[r]?.[0]);
+      const member = cellText(rows[r]?.[1]);
+      if (!/^\d+$/.test(team) || !member || !isRosterNameCell(member)) continue;
+      projects.push({ team_number: team, members: [member], leader: cellText(rows[r]?.[2]), topic: cellText(rows[r]?.[3]), issue: cellText(rows[r]?.[4]), aim: cellText(rows[r]?.[5]), action_plan: cellText(rows[r]?.[6]), source_sheet: name });
+    }
+  } else if (/^list of teams$/i.test(name)) {
     let cur = null;
     for (let r = 1; r < rows.length; r++) {
       const team = cellText(rows[r]?.[0]);

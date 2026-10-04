@@ -292,6 +292,18 @@ test('3alamatak Multi-Teacher Isolation & Import Compatibility Suite', async (t)
       const importJson = await resImport.json();
       assert.strictEqual(resImport.status, 201, `Expected 201 Created, got ${resImport.status}: ${JSON.stringify(importJson)}`);
       assert.ok(importJson.import_id > 0);
+
+      const analyticsResponse = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/analytics`, {
+        headers: { Authorization: `Bearer ${tokenB}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      const analytics = await analyticsResponse.json();
+      assert.strictEqual(analyticsResponse.status, 200);
+      assert.ok('median' in analytics);
+      assert.ok(Array.isArray(analytics.assessments));
+      assert.ok(Array.isArray(analytics.components));
+      assert.ok(Array.isArray(analytics.distribution));
+      assert.ok(Array.isArray(analytics.needs_attention));
     });
 
     await t.test('Gradebook lifecycle supports edit, archive filtering, restore, and permanent deletion', async () => {

@@ -126,11 +126,15 @@ async function persistImportPackage(connection, { gradebookId, uploadedBy, paylo
     (assessment.marks || []).forEach((mark) => {
       const studentId = studentMap.get(mark.student_key);
       const componentId = componentIds[componentOffset + Number(mark.component_index)];
-      if (studentId && componentId) marks.push([componentId, studentId, mark.score ?? null, mark.mark_status || null, mark.comment || null, Boolean(mark.follow_up_required)]);
+      if (studentId && componentId) marks.push([componentId, studentId, mark.score ?? null, mark.mark_status || null, mark.comment || null, Boolean(mark.follow_up_required), JSON.stringify({
+        source_sheet: mark.source_sheet || null,
+        source_row: mark.source_row || null,
+        original_name: mark.display_name || mark.student_key || null,
+      })]);
     });
     componentOffset += assessment.components.length;
   });
-  await insertRows(connection, 'INSERT INTO alamatak_marks', ['component_id', 'student_id', 'score', 'mark_status', 'comment', 'follow_up_required'], marks,
+  await insertRows(connection, 'INSERT INTO alamatak_marks', ['component_id', 'student_id', 'score', 'mark_status', 'comment', 'follow_up_required', 'provenance'], marks,
     'ON DUPLICATE KEY UPDATE score = VALUES(score), mark_status = VALUES(mark_status), comment = VALUES(comment), follow_up_required = VALUES(follow_up_required)');
 
   for (const scheme of payload.schemes || []) {

@@ -1136,16 +1136,50 @@ function RecordsTab({ records, onEdit, onDelete }) {
 }
 
 function Analytics({ analytics, students }) {
+  const summary = analytics?.summary || {};
+  const percent = (value) => value == null ? '—' : `${Number(value).toFixed(1)}%`;
   return (
-    <div className="grid gap-4 p-5 sm:grid-cols-3">
-      <Stat label="Class average" value={analytics?.class_average == null ? '—' : `${analytics.class_average.toFixed(1)}%`} />
-      <Stat label="Highest average" value={analytics?.highest == null ? '—' : `${analytics.highest.toFixed(1)}%`} />
-      <Stat label="Lowest average" value={analytics?.lowest == null ? '—' : `${analytics.lowest.toFixed(1)}%`} />
-      <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600 sm:col-span-3">
-        {students.length} students are in this gradebook. Recorded marks are calculated from persisted Aiven data.
+    <div className="space-y-5 p-5">
+      <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Class average" value={percent(analytics?.class_average)} />
+        <Stat label="Median" value={percent(analytics?.median)} />
+        <Stat label="Highest" value={percent(analytics?.highest)} />
+        <Stat label="Lowest" value={percent(analytics?.lowest)} />
+        <Stat label="Assessed" value={`${summary.assessed_students || 0}/${summary.students || students.length}`} />
+        <Stat label="Completion" value={percent(summary.completion_percent)} />
       </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <AnalyticsPanel title="Performance distribution">
+          <SimpleTable headers={['Band', 'Students', 'Percent']} rows={(analytics?.distribution || []).map((band) => [band.label, band.count, percent(band.percent)])} />
+        </AnalyticsPanel>
+        <AnalyticsPanel title="Needs attention">
+          <SimpleTable headers={['Student', 'Average', 'Missing', 'Absent']} rows={(analytics?.needs_attention || []).slice(0, 10).map((row) => [row.display_name, percent(row.percent), row.missing_marks, row.absent_marks])} />
+        </AnalyticsPanel>
+      </div>
+      <AnalyticsPanel title="Assessment analytics">
+        <SimpleTable headers={['Assessment', 'Average', 'Highest', 'Lowest', 'Completion', 'Missing', 'Absent']} rows={(analytics?.assessments || []).map((assessment) => [assessment.title, percent(assessment.average), percent(assessment.highest), percent(assessment.lowest), percent(assessment.completion_percent), assessment.missing_count, assessment.absent_count])} />
+      </AnalyticsPanel>
+      <AnalyticsPanel title="Component analytics">
+        <SimpleTable headers={['Component', 'Average', 'Highest', 'Lowest', 'Completion', 'Missing']} rows={(analytics?.components || []).map((component) => [`${component.assessment_title} · ${component.name}`, percent(component.average_percent), component.highest == null ? '—' : component.highest, component.lowest == null ? '—' : component.lowest, percent(component.completion_percent), component.missing_count])} />
+      </AnalyticsPanel>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <AnalyticsPanel title="Progress">
+          <SimpleTable headers={['Assessment', 'Class average']} rows={(analytics?.progress || []).map((item) => [item.title, percent(item.average)])} />
+        </AnalyticsPanel>
+        <AnalyticsPanel title="Strongest / weakest components">
+          <div className="grid gap-3 p-3 text-sm sm:grid-cols-2">
+            <div><p className="font-black text-emerald-700">Strongest</p>{(analytics?.strongest_components || []).map((item) => <p key={`strong-${item.id}`} className="mt-1 text-slate-600">{item.name}: {percent(item.average_percent)}</p>)}</div>
+            <div><p className="font-black text-red-700">Weakest</p>{(analytics?.weakest_components || []).map((item) => <p key={`weak-${item.id}`} className="mt-1 text-slate-600">{item.name}: {percent(item.average_percent)}</p>)}</div>
+          </div>
+        </AnalyticsPanel>
+      </div>
+      <p className="text-xs text-slate-500">Analytics exclude blank and status-only marks from numeric averages. Zero is a valid mark; Absent and NA count toward completion/status tracking but not as zero.</p>
     </div>
   );
+}
+
+function AnalyticsPanel({ title, children }) {
+  return <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><h3 className="border-b border-slate-100 px-4 py-3 text-sm font-black text-slate-800">{title}</h3>{children}</section>;
 }
 
 function StudentsView({ students, search, setSearch, onAdd, onEdit, onArchive }) {
@@ -1200,6 +1234,17 @@ function ImportView({
     ).length;
   }, [importPreview, studentResolutions]);
 
+  const matchDiagnostics = useMemo(() => {
+    const seen = new Set();
+    return (importPreview?.pkg?.diagnostics?.matches || []).filter((match) => {
+      if (!match.canonical_name || match.original_name === match.canonical_name) return false;
+      const key = `${match.original_name}|${match.canonical_name}|${match.mode}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [importPreview]);
+
   const updateResolution = (key, resolution) => {
     setStudentResolutions((curr) => ({
       ...curr,
@@ -1244,6 +1289,13 @@ function ImportView({
               <Stat label="Detected Students" value={importPreview.pkg.summary.studentsCount} />
               <Stat label="Assessment Blocks" value={importPreview.pkg.summary.assessmentsCount} />
               <Stat label="Threshold Schemes" value={importPreview.pkg.summary.schemesCount} />
+              <Stat label="Merged Assessments" value={importPreview.pkg.summary.duplicateAssessmentsMerged || 0} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Stat label="Marks Detected" value={(importPreview.pkg.assessments || []).reduce((sum, assessment) => sum + (assessment.marks?.length || 0), 0)} />
+              <Stat label="Alias Matches" value={matchDiagnostics.length} />
+              <Stat label="Unresolved" value={importPreview.pkg.diagnostics?.unresolved_references?.length || 0} />
+              <Stat label="Historical Records" value={importPreview.pkg.summary.historicalCount} />
             </div>
 
             {pendingAmbiguous > 0 && (
@@ -1341,6 +1393,7 @@ function ImportView({
                     <p className="text-xs text-slate-500">Confirm student mappings. Exact and high-confidence matches are pre-assigned.</p>
                   </div>
                 </div>
+                {matchDiagnostics.length > 0 && <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-4"><p className="text-xs font-black uppercase tracking-wider text-teal-800">Alternate spellings matched</p><div className="mt-2 grid gap-1 text-xs text-teal-950 sm:grid-cols-2">{matchDiagnostics.slice(0, 12).map((match) => <p key={`${match.original_name}-${match.canonical_name}`}>{match.original_name} → <strong>{match.canonical_name}</strong> <span className="text-teal-700">({match.mode})</span></p>)}</div></div>}
 
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
                   <table className="w-full min-w-180 text-left text-sm">

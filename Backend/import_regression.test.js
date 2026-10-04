@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildWorkbookImportPackage } = require('./workbookParser');
+const fs = require('node:fs');
+const { buildWorkbookImportPackage, readXlsxWorkbook } = require('./workbookParser');
 const { buildUniqueStudents, persistImportPackage, persistImportTransaction } = require('./importPersistence');
 const { filterGradebooksForList } = require('./gradebookAccess');
 
@@ -71,4 +72,24 @@ test('repeating the same source workbook is idempotent', async () => {
   assert.equal(result.idempotent, true);
   assert.equal(result.importId, 44);
   assert.equal(calls.length, 1);
+});
+
+test('real V3 workbook preserves class sections, raw components, statuses, projects, and aliases', async (t) => {
+  const file = 'E:/Documents/DAD WORK/Manastak/GP 0457 Grade 9 2026-2027 V3.xlsx';
+  if (!fs.existsSync(file)) {
+    t.skip('Real V3 workbook is not available in this environment.');
+    return;
+  }
+  const sheets = await readXlsxWorkbook(fs.readFileSync(file));
+  const pkg = buildWorkbookImportPackage(sheets, 'GP 0457 Grade 9 2026-2027 V3.xlsx', { academicYear: '2026-2027' });
+  assert.deepEqual(sheets.map((sheet) => sheet.name), ['TP Groups', 'Sheet2', '9 A', '9 B', 'RP', 'TP', 'IR']);
+  assert.equal(pkg.students.length, 38);
+  assert.equal(pkg.assessments.length, 1);
+  assert.deepEqual(pkg.assessments[0].components.map((component) => component.maximum_score), [1, 1, 2, 6, 8]);
+  assert.equal(pkg.assessments[0].marks.length, 170);
+  assert.equal(pkg.assessments[0].marks.filter((mark) => mark.mark_status === 'NA').length, 8);
+  assert.equal(pkg.diagnostics.orphan_marks.filter((mark) => mark.mark_status === 'ABSENT').length, 1);
+  assert.equal(pkg.historical_records.length, 7);
+  assert.equal(pkg.diagnostics.unresolved_references.length, 0);
+  assert.ok(pkg.diagnostics.matches.some((match) => match.original_name === 'Oweis Omar Alzayed' && match.canonical_name === 'Oweis Alzayed'));
 });

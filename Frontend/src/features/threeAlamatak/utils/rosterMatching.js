@@ -48,6 +48,14 @@ export function importedNameScore(firstName, secondName) {
   const second = tokens(secondName);
   if (!first.length || !second.length) return 0;
   if (first.join(' ') === second.join(' ')) return 1;
+  if ([...first].sort().join(' ') === [...second].sort().join(' ')) return 0.98;
+  const sharedTokens = first.filter((token) => second.includes(token));
+  const shorter = Math.min(first.length, second.length);
+  if (shorter >= 2 && sharedTokens.length === shorter) return 0.92 + Math.min(0.06, sharedTokens.length / Math.max(first.length, second.length) * 0.06);
+  if (first.length >= 2 && second.length >= 2 && first[0] === second[0]) {
+    const surnameSimilarity = tokenSimilarity(first.at(-1), second.at(-1));
+    if (first[0].length >= 5 && surnameSimilarity >= 0.7 && first.at(-1).slice(0, 3) === second.at(-1).slice(0, 3)) return 0.9 + Math.min(0.07, surnameSimilarity * 0.07);
+  }
 
   const firstSimilarity = tokenSimilarity(first[0], second[0]);
   const lastSimilarity = tokenSimilarity(first.at(-1), second.at(-1));
@@ -71,6 +79,12 @@ export function findConfidentNameMatch(roster, name, externalId = '') {
   const exact = roster.filter((student) => normalizeImportedName(student.display_name || student.name) === normalized);
   if (exact.length === 1) return { item: exact[0], score: 1, mode: 'exact' };
   if (exact.length > 1) return { item: null, score: 1, mode: 'ambiguous-exact' };
+  const inputTokens = tokens(name);
+  if (inputTokens.length === 1) {
+    const tokenMatches = roster.filter((student) => tokens(student.display_name || student.name).includes(inputTokens[0]));
+    if (tokenMatches.length === 1) return { item: tokenMatches[0], score: 0.93, mode: 'unique-token' };
+    if (tokenMatches.length > 1) return { item: null, score: 0.75, mode: 'ambiguous-token' };
+  }
 
   const scored = roster
     .map((student) => ({ item: student, score: importedNameScore(student.display_name || student.name, name) }))
@@ -128,6 +142,13 @@ export function matchImportedRoster(existingStudents = [], importedStudents = []
         resolution: '', // requires teacher selection
         include: true,
       };
+    }
+
+    const inputTokens = tokens(importedName);
+    if (inputTokens.length === 1) {
+      const tokenMatches = existingStudents.filter((student) => tokens(student.display_name || student.name).includes(inputTokens[0]));
+      if (tokenMatches.length === 1) return { ...imported, status: 'fuzzy', mode: 'unique-token', matchedStudent: tokenMatches[0], score: 0.93, candidates: [tokenMatches[0]], resolution: String(tokenMatches[0].id), include: true };
+      if (tokenMatches.length > 1) return { ...imported, status: 'ambiguous', mode: 'ambiguous-token', matchedStudent: null, score: 0.75, candidates: tokenMatches, resolution: '', include: true };
     }
 
     // Fuzzy matching

@@ -277,6 +277,7 @@ async function runMigrations() {
         mark_status VARCHAR(32) NULL,
         comment TEXT NULL,
         follow_up_required BOOLEAN NOT NULL DEFAULT FALSE,
+        provenance JSON NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (component_id) REFERENCES alamatak_assessment_components(id) ON DELETE CASCADE,
         FOREIGN KEY (student_id) REFERENCES alamatak_students(id) ON DELETE CASCADE,
@@ -367,6 +368,11 @@ async function runMigrations() {
     }
     try {
       await pool.query('ALTER TABLE alamatak_gradebooks ADD COLUMN description TEXT NULL AFTER title');
+    } catch (error) {
+      if (!/duplicate column/i.test(error.message || '')) throw error;
+    }
+    try {
+      await pool.query('ALTER TABLE alamatak_marks ADD COLUMN provenance JSON NULL AFTER follow_up_required');
     } catch (error) {
       if (!/duplicate column/i.test(error.message || '')) throw error;
     }

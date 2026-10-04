@@ -20,10 +20,12 @@ async function request(path, options = {}) {
 }
 
 export const threeAlamatakApi = {
-  listGradebooks: () => request('/api/3alamatak/gradebooks'),
+  listGradebooks: (status = 'active') => request(`/api/3alamatak/gradebooks?status=${encodeURIComponent(status)}`),
   createGradebook: (payload) => request('/api/3alamatak/gradebooks', { method: 'POST', body: JSON.stringify(payload) }),
   updateGradebook: (id, payload) => request(`/api/3alamatak/gradebooks/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   archiveGradebook: (id) => request(`/api/3alamatak/gradebooks/${id}`, { method: 'DELETE' }),
+  restoreGradebook: (id) => request(`/api/3alamatak/gradebooks/${id}/restore`, { method: 'POST' }),
+  permanentlyDeleteGradebook: (id) => request(`/api/3alamatak/gradebooks/${id}/permanent`, { method: 'DELETE' }),
   getGradebook: (id) => request(`/api/3alamatak/gradebooks/${id}`),
   listStudents: (id) => request(`/api/3alamatak/gradebooks/${id}/students`),
   createStudent: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/students`, { method: 'POST', body: JSON.stringify(payload) }),

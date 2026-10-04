@@ -294,6 +294,62 @@ test('3alamatak Multi-Teacher Isolation & Import Compatibility Suite', async (t)
       assert.ok(importJson.import_id > 0);
     });
 
+    await t.test('Gradebook lifecycle supports edit, archive filtering, restore, and permanent deletion', async () => {
+      const headersA = { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` };
+      const editResponse = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookAId}`, {
+        method: 'PUT', headers: headersA,
+        body: JSON.stringify({ title: 'Edited Lifecycle Gradebook', description: 'Persistent description', subject: 'Biology', academic_year: '2027-2028' }),
+      });
+      assert.strictEqual(editResponse.status, 200);
+      const edited = await editResponse.json();
+      assert.equal(edited.title, 'Edited Lifecycle Gradebook');
+      assert.equal(edited.description, 'Persistent description');
+
+      const invalidEdit = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookAId}`, {
+        method: 'PUT', headers: headersA,
+        body: JSON.stringify({ title: '', academic_year: '2027-2028' }),
+      });
+      assert.strictEqual(invalidEdit.status, 400);
+      const editOther = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}`, {
+        method: 'PUT', headers: headersA,
+        body: JSON.stringify({ title: 'Unauthorized edit', academic_year: '2027-2028' }),
+      });
+      assert.strictEqual(editOther.status, 404, 'Another teacher cannot edit this gradebook');
+
+      const archiveResponse = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}`, { method: 'DELETE', headers: headersA });
+      assert.strictEqual(archiveResponse.status, 404, 'Another teacher cannot archive this gradebook');
+      const ownArchive = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tokenB}` } });
+      assert.strictEqual(ownArchive.status, 200);
+
+      const activeList = await (await fetch(`${baseUrl}/api/3alamatak/gradebooks?status=active`, { headers: { Authorization: `Bearer ${tokenB}` } })).json();
+      assert.ok(!activeList.some((gradebook) => gradebook.id === gradebookBId));
+      const archivedList = await (await fetch(`${baseUrl}/api/3alamatak/gradebooks?status=archived`, { headers: { Authorization: `Bearer ${tokenB}` } })).json();
+      assert.ok(archivedList.some((gradebook) => gradebook.id === gradebookBId));
+
+      const restoreResponse = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/restore`, { method: 'POST', headers: { Authorization: `Bearer ${tokenB}` } });
+      assert.strictEqual(restoreResponse.status, 200);
+      const restored = await restoreResponse.json();
+      assert.equal(restored.status, 'active');
+      const restoredAssessments = await (await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/assessments`, { headers: { Authorization: `Bearer ${tokenB}` } })).json();
+      assert.ok(restoredAssessments.some((assessment) => assessment.id === assessmentBId), 'Archive/restore preserves gradebook data');
+
+      const archiveA = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookAId}`, { method: 'DELETE', headers: headersA });
+      assert.strictEqual(archiveA.status, 200);
+      const deleteOther = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/permanent`, { method: 'DELETE', headers: headersA });
+      assert.strictEqual(deleteOther.status, 404, 'Another teacher cannot permanently delete this gradebook');
+      const tempCreate = await fetch(`${baseUrl}/api/3alamatak/gradebooks`, {
+        method: 'POST', headers: headersA,
+        body: JSON.stringify({ title: `Permanent Delete Test ${Date.now()}`, academic_year: '2027-2028' }),
+      });
+      const tempGradebook = await tempCreate.json();
+      const tempArchive = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${tempGradebook.id}`, { method: 'DELETE', headers: headersA });
+      assert.strictEqual(tempArchive.status, 200);
+      const permanentDelete = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${tempGradebook.id}/permanent`, { method: 'DELETE', headers: headersA });
+      assert.strictEqual(permanentDelete.status, 200);
+      const gone = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${tempGradebook.id}`, { headers: headersA });
+      assert.strictEqual(gone.status, 404);
+    });
+
     // ----------------------------------------------------------------------
     // TEST 7: Admin access rules
     // ----------------------------------------------------------------------

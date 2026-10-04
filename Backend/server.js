@@ -734,7 +734,7 @@ async function getAlamatakGradebook(req, gradebookId) {
   }
 
   const [rows] = await db.query(
-    `SELECT g.id, g.owner_user_id, g.madrastak_class_id, g.title, g.subject,
+    `SELECT g.id, g.owner_user_id, g.madrastak_class_id, g.title, g.description, g.subject,
             g.academic_year, g.status, g.created_at, g.updated_at
      FROM alamatak_gradebooks g
      WHERE g.id = ?${ownership}`,
@@ -750,6 +750,14 @@ function validateGradebookPayload({ title, academic_year }) {
   if (!academic_year || typeof academic_year !== 'string' || academic_year.trim().length > 32) {
     return 'An academic year is required.';
   }
+  return null;
+}
+
+function validateGradebookMetadata({ description, subject }) {
+  if (description !== null && description !== undefined && typeof description !== 'string') return 'Description must be text.';
+  if (typeof description === 'string' && description.trim().length > 5000) return 'Description must not exceed 5000 characters.';
+  if (subject !== null && subject !== undefined && typeof subject !== 'string') return 'Subject must be text.';
+  if (typeof subject === 'string' && subject.trim().length > 100) return 'Subject must not exceed 100 characters.';
   return null;
 }
 
@@ -773,10 +781,13 @@ app.get('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, a
   try {
     const params = [];
     const includeAll = req.user.role === 'admin' && req.query.all === 'true';
-    const ownership = includeAll ? '' : 'WHERE g.owner_user_id = ? AND g.status = \'active\'';
+    const requestedStatus = req.query.status || 'active';
+    if (!includeAll && !['active', 'archived'].includes(requestedStatus)) return res.status(400).json({ message: 'Invalid gradebook status.' });
+    const ownership = includeAll ? '' : 'WHERE g.owner_user_id = ? AND g.status = ?';
     if (!includeAll) params.push(req.user.id);
+    if (!includeAll) params.push(requestedStatus);
     const [gradebooks] = await db.query(
-      `SELECT g.id, g.owner_user_id, g.madrastak_class_id, g.title, g.subject,
+      `SELECT g.id, g.owner_user_id, g.madrastak_class_id, g.title, g.description, g.subject,
               g.academic_year, g.status, g.created_at, g.updated_at,
               COUNT(DISTINCT s.id) AS student_count
        FROM alamatak_gradebooks g
@@ -786,7 +797,7 @@ app.get('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, a
        ORDER BY g.updated_at DESC`,
       params
     );
-    res.json(filterGradebooksForList(gradebooks, { includeArchived: includeAll }));
+    res.json(filterGradebooksForList(gradebooks, { includeArchived: includeAll || requestedStatus === 'archived' }));
   } catch (error) {
     console.error('3alamatak gradebook list error:', error);
     res.status(500).json({ message: 'Internal server error.' });
@@ -794,9 +805,11 @@ app.get('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, a
 });
 
 app.post('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
-  const { title, subject = null, academic_year, madrastak_class_id = null } = req.body || {};
+  const { title, description = null, subject = null, academic_year, madrastak_class_id = null } = req.body || {};
   const validationError = validateGradebookPayload({ title, academic_year });
   if (validationError) return res.status(400).json({ message: validationError });
+  const metadataError = validateGradebookMetadata({ description, subject });
+  if (metadataError) return res.status(400).json({ message: metadataError });
 
   try {
     let classId = madrastak_class_id || null;
@@ -813,9 +826,9 @@ app.post('/api/3alamatak/gradebooks', verifyToken, requireActiveTeacherOrAdmin, 
 
     const [result] = await db.query(
       `INSERT INTO alamatak_gradebooks
-       (owner_user_id, madrastak_class_id, title, subject, academic_year)
-       VALUES (?, ?, ?, ?, ?)`,
-      [req.user.id, classId, title.trim(), subject ? String(subject).trim() : null, academic_year.trim()]
+       (owner_user_id, madrastak_class_id, title, description, subject, academic_year)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [req.user.id, classId, title.trim(), description ? String(description).trim() : null, subject ? String(subject).trim() : null, academic_year.trim()]
     );
     const gradebook = await getAlamatakGradebook(req, result.insertId);
     res.status(201).json(gradebook);
@@ -837,9 +850,14 @@ app.get('/api/3alamatak/gradebooks/:id', verifyToken, requireActiveTeacherOrAdmi
 });
 
 app.put('/api/3alamatak/gradebooks/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
-  const { title, subject = null, academic_year, status } = req.body || {};
+  const { title, description = null, subject = null, academic_year, status } = req.body || {};
+  const requestedClassId = Object.prototype.hasOwnProperty.call(req.body || {}, 'madrastak_class_id')
+    ? req.body.madrastak_class_id
+    : undefined;
   const validationError = validateGradebookPayload({ title, academic_year });
   if (validationError) return res.status(400).json({ message: validationError });
+  const metadataError = validateGradebookMetadata({ description, subject });
+  if (metadataError) return res.status(400).json({ message: metadataError });
   if (status !== undefined && !['active', 'archived'].includes(status)) {
     return res.status(400).json({ message: 'Invalid gradebook status.' });
   }
@@ -847,11 +865,17 @@ app.put('/api/3alamatak/gradebooks/:id', verifyToken, requireActiveTeacherOrAdmi
   try {
     const gradebook = await getAlamatakGradebook(req, req.params.id);
     if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const madrastakClassId = requestedClassId === undefined ? gradebook.madrastak_class_id : requestedClassId;
+    if (madrastakClassId !== null && madrastakClassId !== '') {
+      const [classes] = await db.query('SELECT id, teacher_id FROM live_classes WHERE id = ?', [madrastakClassId]);
+      if (!classes.length) return res.status(400).json({ message: 'Linked Madrastak class was not found.' });
+      if (req.user.role !== 'admin' && Number(classes[0].teacher_id) !== Number(req.user.id)) return res.status(403).json({ message: 'You cannot link a gradebook to another teacher’s class.' });
+    }
     await db.query(
       `UPDATE alamatak_gradebooks
-       SET title = ?, subject = ?, academic_year = ?, status = COALESCE(?, status)
+       SET title = ?, description = ?, subject = ?, academic_year = ?, madrastak_class_id = ?, status = COALESCE(?, status)
        WHERE id = ?`,
-      [title.trim(), subject ? String(subject).trim() : null, academic_year.trim(), status || null, gradebook.id]
+      [title.trim(), description ? String(description).trim() : null, subject ? String(subject).trim() : null, academic_year.trim(), madrastakClassId || null, status || null, gradebook.id]
     );
     res.json(await getAlamatakGradebook(req, gradebook.id));
   } catch (error) {
@@ -869,6 +893,32 @@ app.delete('/api/3alamatak/gradebooks/:id', verifyToken, requireActiveTeacherOrA
     res.json({ message: 'Gradebook archived.' });
   } catch (error) {
     console.error('3alamatak gradebook archive error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/restore', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    await db.query("UPDATE alamatak_gradebooks SET status = 'active' WHERE id = ?", [gradebook.id]);
+    res.json(await getAlamatakGradebook(req, gradebook.id));
+  } catch (error) {
+    console.error('3alamatak gradebook restore error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.delete('/api/3alamatak/gradebooks/:id/permanent', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    if (gradebook.status !== 'archived') return res.status(409).json({ message: 'Only archived gradebooks can be permanently deleted.' });
+    const [result] = await db.query('DELETE FROM alamatak_gradebooks WHERE id = ?', [gradebook.id]);
+    if (!result.affectedRows) return res.status(404).json({ message: 'Gradebook not found.' });
+    res.json({ message: 'Gradebook permanently deleted.' });
+  } catch (error) {
+    console.error('3alamatak gradebook permanent delete error:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 });

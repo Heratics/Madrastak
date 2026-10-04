@@ -61,6 +61,7 @@ export default function ThreeAlamatakPage() {
   const navigate = useNavigate();
   const [view, setView] = useState('dashboard');
   const [gradebooks, setGradebooks] = useState([]);
+  const [gradebookTab, setGradebookTab] = useState('active');
   const [selectedId, setSelectedId] = useState(null);
   const [gradebook, setGradebook] = useState(null);
   const [students, setStudents] = useState([]);
@@ -75,6 +76,7 @@ export default function ThreeAlamatakPage() {
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [showGradebookForm, setShowGradebookForm] = useState(false);
+  const [editingGradebook, setEditingGradebook] = useState(null);
   const [showStudentForm, setShowStudentForm] = useState(false);
   const [showAssessmentForm, setShowAssessmentForm] = useState(false);
   const [editingStudent, setEditingStudent] = useState(null);
@@ -85,10 +87,10 @@ export default function ThreeAlamatakPage() {
   const [importPreview, setImportPreview] = useState(null);
   const [studentResolutions, setStudentResolutions] = useState({});
 
-  const loadGradebooks = async (preferredId = selectedId) => {
+  const loadGradebooks = async (preferredId = selectedId, status = gradebookTab) => {
     setBusy(true);
     try {
-      const data = await threeAlamatakApi.listGradebooks();
+      const data = await threeAlamatakApi.listGradebooks(status);
       setGradebooks(data);
       const nextId = preferredId && data.some((item) => item.id === preferredId) ? preferredId : data[0]?.id || null;
       setSelectedId(nextId);
@@ -175,8 +177,47 @@ export default function ThreeAlamatakPage() {
       const created = await threeAlamatakApi.createGradebook(payload);
       setShowGradebookForm(false);
       setView('classes');
-      await loadGradebooks(created.id);
+      await loadGradebooks(created.id, 'active');
     }, 'Gradebook created.');
+  };
+
+  const editGradebook = async (payload) => {
+    await runAction(async () => {
+      await threeAlamatakApi.updateGradebook(editingGradebook.id, payload);
+      setEditingGradebook(null);
+      await loadGradebooks(editingGradebook.id, gradebookTab);
+      if (selectedId === editingGradebook.id) await loadWorkspace(editingGradebook.id);
+    }, 'Gradebook updated.');
+  };
+
+  const archiveGradebook = async (id = selectedId) => {
+    if (!id || !window.confirm('Archive this gradebook? Its data will remain available for restoration.')) return;
+    await runAction(async () => {
+      await threeAlamatakApi.archiveGradebook(id);
+      setSelectedId(null);
+      await loadGradebooks(null, gradebookTab);
+    }, 'Gradebook archived.');
+  };
+
+  const restoreGradebook = async (id) => {
+    await runAction(async () => {
+      await threeAlamatakApi.restoreGradebook(id);
+      await loadGradebooks(null, 'archived');
+    }, 'Gradebook restored.');
+  };
+
+  const permanentlyDeleteGradebook = async (id) => {
+    if (!window.confirm('Permanently delete this archived gradebook and all of its gradebook data? This cannot be undone and will not delete your teacher account.')) return;
+    await runAction(async () => {
+      await threeAlamatakApi.permanentlyDeleteGradebook(id);
+      if (selectedId === id) setSelectedId(null);
+      await loadGradebooks(null, 'archived');
+    }, 'Gradebook permanently deleted.');
+  };
+
+  const switchGradebookTab = async (tab) => {
+    setGradebookTab(tab);
+    await loadGradebooks(null, tab);
   };
 
   const createStudent = async (payload) => {
@@ -260,14 +301,6 @@ export default function ThreeAlamatakPage() {
       await threeAlamatakApi.deleteScheme(selectedId, schemeId);
       await loadWorkspace();
     }, 'Grading scheme deleted.');
-  };
-
-  const archiveGradebook = async (id = selectedId) => {
-    if (!id || !window.confirm('Archive this gradebook? Its history will remain available.')) return;
-    await runAction(async () => {
-      await threeAlamatakApi.archiveGradebook(id);
-      await loadGradebooks(null);
-    }, 'Gradebook archived.');
   };
 
   const refresh = () => runAction(async () => {
@@ -550,7 +583,7 @@ export default function ThreeAlamatakPage() {
           )}
           {toast && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{toast}</div>}
           {view === 'dashboard' && <DashboardView gradebooks={gradebooks} analytics={analytics} students={students} assessments={assessments} onSelect={(id) => { setSelectedId(id); setView('classes'); }} />}
-          {view === 'classes' && <ClassesView gradebooks={gradebooks} selectedId={selectedId} gradebook={gradebook} onSelect={setSelectedId} onCreate={() => setShowGradebookForm(true)} onArchive={archiveGradebook} />}
+          {view === 'classes' && <ClassesView gradebooks={gradebooks} selectedId={selectedId} gradebookTab={gradebookTab} onTabChange={switchGradebookTab} onSelect={setSelectedId} onCreate={() => setShowGradebookForm(true)} onEdit={setEditingGradebook} onArchive={archiveGradebook} onRestore={restoreGradebook} onPermanentDelete={permanentlyDeleteGradebook} />}
           {view === 'students' && <StudentsView students={filteredStudents} search={search} setSearch={setSearch} onAdd={() => setShowStudentForm(true)} onEdit={setEditingStudent} onArchive={removeStudent} />}
           {view === 'imports' && (
             <ImportView
@@ -624,6 +657,7 @@ export default function ThreeAlamatakPage() {
       </div>
 
       {showGradebookForm && <GradebookForm onCancel={() => setShowGradebookForm(false)} onSubmit={createGradebook} />}
+      {editingGradebook && <GradebookForm gradebook={editingGradebook} onCancel={() => setEditingGradebook(null)} onSubmit={editGradebook} />}
       {showStudentForm && selectedId && <StudentForm onCancel={() => setShowStudentForm(false)} onSubmit={createStudent} />}
       {editingStudent && selectedId && <StudentForm student={editingStudent} onCancel={() => setEditingStudent(null)} onSubmit={editStudent} />}
       {showAssessmentForm && selectedId && <AssessmentForm assessment={editingAssessment} onCancel={() => { setShowAssessmentForm(false); setEditingAssessment(null); }} onSubmit={editingAssessment ? saveAssessment : createAssessment} />}
@@ -684,10 +718,17 @@ function DashboardView({ gradebooks, analytics, students, assessments, onSelect 
   );
 }
 
-function ClassesView({ gradebooks, selectedId, onSelect, onCreate, onArchive }) {
+function ClassesView({ gradebooks, selectedId, gradebookTab, onTabChange, onSelect, onCreate, onEdit, onArchive, onRestore, onPermanentDelete }) {
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex rounded-xl bg-slate-100 p-1">
+          {['active', 'archived'].map((tab) => (
+            <button key={tab} type="button" onClick={() => onTabChange(tab)} className={`rounded-lg px-4 py-2 text-sm font-bold capitalize ${gradebookTab === tab ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+              {tab}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={onCreate}
@@ -709,13 +750,17 @@ function ClassesView({ gradebooks, selectedId, onSelect, onCreate, onArchive }) 
               </div>
               <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-700">{item.student_count || 0} students</span>
             </div>
-            <div className="mt-5 flex gap-2">
+            <div className="mt-5 flex flex-wrap gap-2">
               <button type="button" onClick={() => onSelect(item.id)} className="min-h-10 rounded-xl bg-slate-900 px-4 text-sm font-bold text-white">
-                Open workspace
+                Open
               </button>
-              <button type="button" onClick={() => onArchive(item.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-200 px-3 text-sm font-bold text-red-700 hover:bg-red-50">
-                <Archive className="h-4 w-4" /> Archive
-              </button>
+              {gradebookTab === 'active' ? <>
+                <button type="button" onClick={() => onEdit(item)} className="min-h-10 rounded-xl border border-teal-200 px-3 text-sm font-bold text-teal-700 hover:bg-teal-50">Edit</button>
+                <button type="button" onClick={() => onArchive(item.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-200 px-3 text-sm font-bold text-red-700 hover:bg-red-50"><Archive className="h-4 w-4" /> Archive</button>
+              </> : <>
+                <button type="button" onClick={() => onRestore(item.id)} className="min-h-10 rounded-xl border border-emerald-200 px-3 text-sm font-bold text-emerald-700 hover:bg-emerald-50">Restore</button>
+                <button type="button" onClick={() => onPermanentDelete(item.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-200 px-3 text-sm font-bold text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /> Delete Permanently</button>
+              </>}
             </div>
           </div>
         ))}
@@ -1622,14 +1667,17 @@ function PrintReportModal({ gradebook, students, assessments, analytics, schemes
   );
 }
 
-function GradebookForm({ onCancel, onSubmit }) {
-  const [form, setForm] = useState({ title: '', subject: 'ESL', academic_year: '2025-2026' });
+function GradebookForm({ gradebook, onCancel, onSubmit }) {
+  const [form, setForm] = useState(() => gradebook ? {
+    title: gradebook.title || '', description: gradebook.description || '', subject: gradebook.subject || '', academic_year: gradebook.academic_year || '', madrastak_class_id: gradebook.madrastak_class_id || null,
+  } : { title: '', description: '', subject: 'ESL', academic_year: '2025-2026', madrastak_class_id: null });
   return (
-    <Modal title="New gradebook" onCancel={onCancel}>
+    <Modal title={gradebook ? 'Edit gradebook' : 'New gradebook'} onCancel={onCancel}>
       <Field label="Title" value={form.title} onChange={(value) => setForm({ ...form, title: value })} placeholder="Year 10 ESL" />
+      <label className="mb-4 block text-xs font-bold text-slate-600">Description<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className="mt-1 min-h-20 w-full rounded-xl border border-slate-200 p-3 text-sm" /></label>
       <Field label="Subject" value={form.subject} onChange={(value) => setForm({ ...form, subject: value })} placeholder="ESL" />
       <Field label="Academic year" value={form.academic_year} onChange={(value) => setForm({ ...form, academic_year: value })} placeholder="2025-2026" />
-      <FormActions onCancel={onCancel} onSubmit={() => onSubmit(form)} label="Create gradebook" />
+      <FormActions onCancel={onCancel} onSubmit={() => onSubmit(form)} label={gradebook ? 'Save changes' : 'Create gradebook'} />
     </Modal>
   );
 }

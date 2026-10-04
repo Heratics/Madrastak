@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS alamatak_gradebooks (
   owner_user_id INT NOT NULL,
   madrastak_class_id INT NULL,
   title VARCHAR(255) NOT NULL,
+  description TEXT NULL,
   subject VARCHAR(100) NULL,
   academic_year VARCHAR(32) NOT NULL,
   status ENUM('active', 'archived') NOT NULL DEFAULT 'active',
@@ -258,4 +259,3 @@ CREATE TABLE IF NOT EXISTS class_attendance (
   INDEX idx_attendance_user (user_id),
   INDEX idx_attendance_session (class_id, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-

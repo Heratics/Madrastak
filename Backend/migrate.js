@@ -210,6 +210,7 @@ async function runMigrations() {
         owner_user_id INT NOT NULL,
         madrastak_class_id INT NULL,
         title VARCHAR(255) NOT NULL,
+        description TEXT NULL,
         subject VARCHAR(100) NULL,
         academic_year VARCHAR(32) NOT NULL,
         status ENUM('active', 'archived') NOT NULL DEFAULT 'active',
@@ -364,6 +365,11 @@ async function runMigrations() {
     for (const statement of alamatakStatements) {
       await pool.query(statement);
     }
+    try {
+      await pool.query('ALTER TABLE alamatak_gradebooks ADD COLUMN description TEXT NULL AFTER title');
+    } catch (error) {
+      if (!/duplicate column/i.test(error.message || '')) throw error;
+    }
     console.log('✔ 3alamatak tables verified.');
 
     console.log('\n🎉 All migrations completed successfully! Database is up to date.');
@@ -381,4 +387,3 @@ if (require.main === module) {
 }
 
 module.exports = { runMigrations };
-

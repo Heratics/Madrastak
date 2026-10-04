@@ -241,7 +241,7 @@ function importedDate(value) {
 }
 
 function isNameHeader(value) {
-  return /^(student\s*(name|names)?|name|learner|pupil|full\s*name|اسم الطالب|الاسم)$/i.test(cellText(value));
+  return /^(student\s*(name|names)?|name|learner|pupil|full\s*name|all\s+students?|group\s+members?|اسم الطالب|الاسم)$/i.test(cellText(value));
 }
 
 function isIdHeader(value) {
@@ -253,7 +253,7 @@ function isMetricLabel(value) {
 }
 
 function isAggregateLabel(value) {
-  return /^(total|total marks?|out of|score|grade|grid level|average|mean|min|max)$/i.test(cellText(value));
+  return /^(total|total marks?|out of|score|grade|grid level|average|mean|min|max|pioneer|first\s+month\s+assessment|first\s+month|derived|scaled)/i.test(cellText(value));
 }
 
 const NON_STUDENT_EXACT = new Set([
@@ -276,7 +276,27 @@ function isPlausiblePersonName(value) {
   return true;
 }
 
-function findNameBlocks(rows) {
+function isStudentCell(value, row = [], nameCol = -1) {
+  if (isPlausiblePersonName(value)) return true;
+  const text = cellText(value);
+  if (!text || text.length < 2 || text.length > 50 || /\d|[\/%:;=@]/.test(text)) return false;
+  if (/^(?:name|student|all students?|level|mark|marks|total|absent|na|ns|p)$/i.test(text)) return false;
+  return row.some((cell, index) => index !== nameCol && ['number', 'status'].includes(parseImportedNumeric(cell).type));
+}
+
+function hasAssessmentStructure(rows) {
+  return findNameBlocks(rows, { allowStructural: true }).some((block) => {
+    const info = inferRowsForBlock(rows, block);
+    let records = 0;
+    for (let r = info.dataStart; r < Math.min(rows.length, info.dataStart + 80); r += 1) {
+      const row = rows[r] || [];
+      if (isStudentCell(row[block.nameCol], row, block.nameCol) && row.some((cell, c) => c !== block.nameCol && parseImportedNumeric(cell).type !== 'empty')) records += 1;
+    }
+    return records >= 2;
+  });
+}
+
+function findNameBlocks(rows, options = {}) {
   const blocks = [];
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
     for (let c = 0; c < (rows[r]?.length || 0); c++) {
@@ -290,6 +310,22 @@ function findNameBlocks(rows) {
     }
   }
   if (blocks.length) return blocks;
+
+  if (options.allowStructural !== false) {
+    const maxCols = Math.min(20, Math.max(0, ...rows.map((r) => r.length || 0)));
+    for (let c = 0; c < maxCols; c += 1) {
+      const candidates = [];
+      for (let r = 0; r < Math.min(rows.length, 35); r += 1) {
+        const row = rows[r] || [];
+        if (!isStudentCell(row[c], row, c)) continue;
+        if (row.some((cell, index) => index !== c && parseImportedNumeric(cell).type !== 'empty')) candidates.push(r);
+      }
+      if (candidates.length >= 3) {
+        blocks.push({ headerRow: Math.max(0, candidates[0] - 2), nameCol: c, idCol: -1, fallback: true, dataStart: candidates[0] });
+        return blocks;
+      }
+    }
+  }
 
   const maxCols = Math.min(8, Math.max(0, ...rows.map((r) => r.length || 0)));
   for (let c = 0; c < maxCols; c++) {
@@ -400,13 +436,17 @@ function classifyWorksheet(sheet) {
   if (/^conduct$/i.test(name)) return { type: 'behavior', label: 'Behavior / Conduct', selected: true };
   if (/^social$/i.test(name)) return { type: 'mixed', label: 'Grades + Behavior', selected: true };
   if (/^(list of teams|gp projects 2026)$/i.test(name)) return { type: 'team-projects', label: 'Team Projects', selected: true };
+  if (/^tp groups$/i.test(name)) return { type: 'team-projects', label: 'Team Projects / Groups', selected: true };
   if (/^ir submission$/i.test(name)) return { type: 'assignments', label: 'Assignments / Submission Tracker', selected: true };
   if (/grade.?threshold/i.test(lowerName)) return { type: 'threshold', label: 'Grade Threshold Scheme', selected: true };
   if (/criteria|email list/i.test(lowerName)) return { type: 'reference', label: 'Reference / Criteria', selected: false };
   // Explicit roster sheets are the only source allowed to create students. Grade
   // 9/assessment sheets contain marks for a roster, not an independent roster.
   if (/^sheet1$/i.test(name) || /^sheet3$/i.test(name)) return { type: 'students', label: 'Students / Roster', selected: true };
-  if (hasNameBlock(rows) && (numericCount >= 3 || /assessment|exam|marks?|grade|score|question|semester|paper/i.test(`${name} ${preview}`))) {
+  if (rows.some((row) => row.some((value) => /all\s+students?|group\s+members?/i.test(cellText(value))))) {
+    return { type: 'students', label: 'Students / Roster / Groups', selected: !sheet.hidden };
+  }
+  if (hasAssessmentStructure(rows) && (numericCount >= 3 || /assessment|exam|marks?|grade|score|question|semester|paper|class|section/i.test(`${name} ${preview}`))) {
     return { type: 'grades', label: 'Grades / Assessments', selected: !sheet.hidden };
   }
   return { type: 'reference', label: 'Reference / view only', selected: false };
@@ -430,22 +470,27 @@ function identifyCanonicalRosterPlans(plans) {
 
 function canonicalRosterFromPlans(plans) {
   const candidates = identifyCanonicalRosterPlans(plans);
-  const rosterPlans = candidates.length ? candidates : plans.filter((plan) => plan.selected && plan.type === 'grades').length === 1
-    ? plans.filter((plan) => plan.selected && plan.type === 'grades')
-    : [];
+  const rosterPlans = candidates.length ? candidates : plans.filter((plan) => plan.selected && plan.type === 'grades');
   const byId = new Map();
   const byName = new Map();
   for (const plan of rosterPlans) {
     const sourceRows = plan.type === 'students'
-      ? plan.rows || []
-      : (findNameBlocks(plan.rows || []).flatMap((block) => {
+      ? (() => {
+        const header = (plan.rows || []).findIndex((row) => row.some((cell) => isNameHeader(cell)));
+        if (header >= 0) {
+          const nameCol = (plan.rows[header] || []).findIndex((cell) => isNameHeader(cell));
+          return (plan.rows || []).slice(header + 1).map((row) => [row[nameCol]]);
+        }
+        return plan.rows || [];
+      })()
+      : (findNameBlocks(plan.rows || [], { allowStructural: true }).flatMap((block) => {
         const info = inferRowsForBlock(plan.rows || [], block);
         return (plan.rows || []).slice(info.dataStart).map((row) => [row[block.nameCol], block.idCol >= 0 ? row[block.idCol] : null]);
       }));
     for (const row of sourceRows) {
       const cells = row.map(cellText);
-      const name = cells.length === 1 ? cells[0] : cells.find((cell) => cell && !/@/.test(cell) && !/^\w[-\w]+$/.test(cell)) || '';
-      if (!name || !isPlausiblePersonName(name)) continue;
+      const name = cells.length === 1 ? cells[0] : cells[0] || cells.find((cell) => cell && !/@/.test(cell) && !/^\w[-\w]+$/.test(cell)) || '';
+      if (!name || !isStudentCell(name, cells, 0)) continue;
       const externalId = cells.find((cell) => cell && /^\w[-\w]+$/.test(cell) && !/@/.test(cell)) || null;
       const email = cells.find((cell) => /@/.test(cell)) || null;
       const candidate = {
@@ -653,7 +698,7 @@ function extractAssessmentBlocks(sheet, roster = [], unmatched = new Set(), year
     for (let r = info.dataStart; r < rows.length; r++) {
       const rawName = cellText(rows[r]?.[b.nameCol]);
       if (!rawName) continue;
-      if (!isPlausiblePersonName(rawName)) continue;
+      if (!isStudentCell(rawName, rows[r] || [], b.nameCol)) continue;
       const externalId = b.idCol >= 0 ? cellText(rows[r]?.[b.idCol]) : '';
 
       componentDefs.forEach((def, compIndex) => {

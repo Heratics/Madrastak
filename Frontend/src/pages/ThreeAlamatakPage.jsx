@@ -237,6 +237,15 @@ export default function ThreeAlamatakPage() {
     }, 'Record deleted.');
   };
 
+  const removeStudent = async (studentId) => {
+    const student = students.find((item) => item.id === studentId);
+    if (!student || !window.confirm(`Remove ${student.display_name} from this gradebook? This archives the gradebook record and does not delete any Madrastak account.`)) return;
+    await runAction(async () => {
+      await threeAlamatakApi.archiveStudent(selectedId, studentId);
+      await loadWorkspace();
+    }, 'Student removed from this gradebook.');
+  };
+
   const createScheme = async (payload) => {
     await runAction(async () => {
       await threeAlamatakApi.createScheme(selectedId, payload);
@@ -542,7 +551,7 @@ export default function ThreeAlamatakPage() {
           {toast && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{toast}</div>}
           {view === 'dashboard' && <DashboardView gradebooks={gradebooks} analytics={analytics} students={students} assessments={assessments} onSelect={(id) => { setSelectedId(id); setView('classes'); }} />}
           {view === 'classes' && <ClassesView gradebooks={gradebooks} selectedId={selectedId} gradebook={gradebook} onSelect={setSelectedId} onCreate={() => setShowGradebookForm(true)} onArchive={archiveGradebook} />}
-          {view === 'students' && <StudentsView students={filteredStudents} search={search} setSearch={setSearch} onAdd={() => setShowStudentForm(true)} onEdit={setEditingStudent} onArchive={(id) => runAction(() => threeAlamatakApi.archiveStudent(selectedId, id).then(loadWorkspace), 'Student archived.')} />}
+          {view === 'students' && <StudentsView students={filteredStudents} search={search} setSearch={setSearch} onAdd={() => setShowStudentForm(true)} onEdit={setEditingStudent} onArchive={removeStudent} />}
           {view === 'imports' && (
             <ImportView
               selectedId={selectedId}
@@ -554,6 +563,15 @@ export default function ThreeAlamatakPage() {
               onToggleSheet={(index, selected) => {
                 if (!importPreview) return;
                 const nextSheets = importPreview.pkg.sheets.map((s, idx) => (idx === index ? { ...s, selected } : s));
+                const nextPkg = buildWorkbookImportPackage(nextSheets, importPreview.file.name, {
+                  existingStudents: students,
+                  academicYear: gradebook?.academic_year,
+                });
+                setImportPreview({ ...importPreview, pkg: nextPkg });
+              }}
+              onSetAllSheets={(selected) => {
+                if (!importPreview) return;
+                const nextSheets = importPreview.pkg.sheets.map((sheet) => ({ ...sheet, selected }));
                 const nextPkg = buildWorkbookImportPackage(nextSheets, importPreview.file.name, {
                   existingStudents: students,
                   academicYear: gradebook?.academic_year,
@@ -1109,7 +1127,7 @@ function StudentsView({ students, search, setSearch, onAdd, onEdit, onArchive })
           student.display_name,
           student.email || '—',
           student.status,
-          <span key={student.id} className="flex gap-3"><button type="button" onClick={() => onEdit(student)} className="text-xs font-bold text-teal-700">Edit</button><button type="button" onClick={() => onArchive(student.id)} className="text-xs font-bold text-red-700">Archive</button></span>,
+          <span key={student.id} className="flex gap-3"><button type="button" onClick={() => onEdit(student)} className="text-xs font-bold text-teal-700">Edit</button><button type="button" onClick={() => onArchive(student.id)} className="text-xs font-bold text-red-700">Remove</button></span>,
         ])}
       />
     </div>
@@ -1124,6 +1142,7 @@ function ImportView({
   existingStudents,
   onAnalyze,
   onToggleSheet,
+  onSetAllSheets,
   onCommit,
   onRestore,
 }) {
@@ -1212,7 +1231,13 @@ function ImportView({
 
             {activeTab === 'preview' && (
               <div className="space-y-4">
-                <h4 className="text-sm font-black text-slate-900">Worksheet Classification</h4>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-sm font-black text-slate-900">Worksheet Classification</h4>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => onSetAllSheets(true)} className="rounded-lg border border-teal-200 px-3 py-1.5 text-xs font-bold text-teal-700">Check All</button>
+                    <button type="button" onClick={() => onSetAllSheets(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600">Uncheck All</button>
+                  </div>
+                </div>
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
                   <table className="w-full min-w-170 text-left text-sm">
                     <thead>
@@ -1234,7 +1259,7 @@ function ImportView({
                               className="h-4 w-4 rounded-sm text-teal-600"
                             />
                           </td>
-                          <td className="px-3 py-3 font-bold text-slate-900">{sheet.name}</td>
+                          <td className="px-3 py-3 font-bold text-slate-900">{sheet.name} {sheet.hidden && <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Hidden</span>}</td>
                           <td className="px-3 py-3">
                             <span className="rounded-md bg-teal-50 px-2 py-0.5 text-xs font-bold text-teal-700">
                               {sheet.label}

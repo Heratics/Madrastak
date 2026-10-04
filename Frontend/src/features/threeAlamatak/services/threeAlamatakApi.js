@@ -61,6 +61,24 @@ export const threeAlamatakApi = {
     return response.blob();
   },
   exportGradebook: (id) => request(`/api/3alamatak/gradebooks/${id}/export`),
+  getBackup: (id) => request(`/api/3alamatak/gradebooks/${id}/backup`),
+  validateBackup: (id, payload) => {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+    return request(`/api/3alamatak/gradebooks/${id}/backups/validate`, {
+      method: 'POST',
+      body: isFormData ? payload : JSON.stringify(payload),
+    });
+  },
+  restoreBackup: (id, payload) => {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+    return request(`/api/3alamatak/gradebooks/${id}/backups/restore`, {
+      method: 'POST',
+      body: isFormData ? payload : JSON.stringify(payload),
+    });
+  },
+  listCheckpoints: (id) => request(`/api/3alamatak/gradebooks/${id}/checkpoints`),
+  restoreCheckpoint: (id, checkpointId) => request(`/api/3alamatak/gradebooks/${id}/checkpoints/${checkpointId}/restore`, { method: 'POST' }),
+  deleteCheckpoint: (id, checkpointId) => request(`/api/3alamatak/gradebooks/${id}/checkpoints/${checkpointId}`, { method: 'DELETE' }),
   analyzeWorkbook: (id, file) => {
     const formData = new FormData();
     formData.append('file', file);

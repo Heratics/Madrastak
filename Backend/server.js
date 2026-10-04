@@ -12,6 +12,12 @@ const workbookParser = require('./workbookParser');
 const { persistImportTransaction } = require('./importPersistence');
 const { filterGradebooksForList } = require('./gradebookAccess');
 const { calculateFinalGrades, validateThresholdScheme } = require('./finalGradeCalculator');
+const {
+  buildGradebookBackupSnapshot,
+  validateBackupPayload,
+  createRecoveryCheckpoint,
+  executeReplaceRestore,
+} = require('./gradebookBackup');
 
 const app = express();
 
@@ -66,6 +72,45 @@ function handleOptionalUpload(req, res, next) {
   const contentType = req.headers['content-type'] || '';
   if (contentType.includes('multipart/form-data')) {
     return handleUpload(req, res, next);
+  }
+  next();
+}
+
+const uploadBackup = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 20 * 1024 * 1024, // 20 MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowed = /\.(json|xml|html|htm|txt)$/i.test(file.originalname);
+    if (!allowed) {
+      const error = new Error('Invalid backup file format. Please upload a .json, .xml, or .html backup file.');
+      error.status = 400;
+      return cb(error);
+    }
+    cb(null, true);
+  },
+});
+
+function handleBackupUpload(req, res, next) {
+  uploadBackup.single('file')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ message: 'Payload Too Large: Backup file exceeds the 20 MB limit.' });
+      }
+      return res.status(400).json({ message: `Upload error: ${err.message}` });
+    } else if (err) {
+      const status = err.status || 400;
+      return res.status(status).json({ message: err.message || 'Backup upload failed.' });
+    }
+    next();
+  });
+}
+
+function handleOptionalBackupUpload(req, res, next) {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    return handleBackupUpload(req, res, next);
   }
   next();
 }
@@ -1587,62 +1632,237 @@ app.get('/api/3alamatak/gradebooks/:id/analytics', verifyToken, requireActiveTea
   } catch (error) { console.error('3alamatak analytics error:', error); res.status(500).json({ message: 'Internal server error.' }); }
 });
 
+app.get('/api/3alamatak/gradebooks/:id/backup', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const backup = await buildGradebookBackupSnapshot(db, gradebook.id);
+    if (!backup) return res.status(404).json({ message: 'Gradebook data could not be retrieved.' });
+    const safeTitle = String(gradebook.title || '3alamatak').replace(/[^\w-]+/g, '_');
+    const safeYear = String(gradebook.academic_year || '').replace(/[^\w-]+/g, '_');
+    const filename = `${safeTitle}_${safeYear}_Backup.json`;
+    res.type('application/json')
+      .set('Content-Disposition', `attachment; filename="${filename}"`)
+      .json(backup);
+  } catch (error) {
+    console.error('3alamatak backup download error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
 app.get('/api/3alamatak/gradebooks/:id/export', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   try {
     const gradebook = await getAlamatakGradebook(req, req.params.id);
     if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
-    const [students] = await db.query('SELECT * FROM alamatak_students WHERE gradebook_id = ? ORDER BY display_name', [gradebook.id]);
-    const [assessments] = await db.query('SELECT * FROM alamatak_assessments WHERE gradebook_id = ? ORDER BY id', [gradebook.id]);
-    const [components] = await db.query(
-      `SELECT c.* FROM alamatak_assessment_components c
-       JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ? ORDER BY c.assessment_id, c.sort_order`,
-      [gradebook.id]
-    );
-    const [marks] = await db.query(
-      `SELECT m.* FROM alamatak_marks m
-       JOIN alamatak_assessment_components c ON c.id = m.component_id
-       JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ?`,
-      [gradebook.id]
-    );
-    const [schemes] = await db.query('SELECT * FROM alamatak_grading_schemes WHERE gradebook_id = ?', [gradebook.id]);
-    const schemeIds = schemes.map((s) => s.id);
-    let schemeComponents = [];
-    let thresholds = [];
-    if (schemeIds.length) {
-      [schemeComponents] = await db.query('SELECT * FROM alamatak_grading_components WHERE scheme_id IN (?)', [schemeIds]);
-      const compIds = schemeComponents.map((c) => c.id);
-      if (compIds.length) {
-        [thresholds] = await db.query('SELECT * FROM alamatak_grade_thresholds WHERE grading_component_id IN (?)', [compIds]);
-      }
-    }
-    const [historicalRecords] = await db.query('SELECT * FROM alamatak_historical_records WHERE gradebook_id = ?', [gradebook.id]);
-    const [finalConfigs] = await db.query('SELECT * FROM alamatak_final_grade_configs WHERE gradebook_id = ?', [gradebook.id]);
-    let finalCategories = [];
-    let finalItems = [];
-    if (finalConfigs.length) {
-      const configIds = finalConfigs.map((config) => config.id);
-      [finalCategories] = await db.query('SELECT * FROM alamatak_final_grade_categories WHERE config_id IN (?) ORDER BY sort_order, id', [configIds]);
-      const categoryIds = finalCategories.map((category) => category.id);
-      if (categoryIds.length) [finalItems] = await db.query('SELECT * FROM alamatak_final_grade_items WHERE category_id IN (?)', [categoryIds]);
-    }
-    res.json({
-      version: 1,
-      exported_at: new Date().toISOString(),
-      gradebook,
-      students,
-      assessments,
-      components,
-      marks,
-      schemes,
-      scheme_components: schemeComponents,
-      thresholds,
-      historical_records: historicalRecords,
-      final_grade_configs: finalConfigs,
-      final_grade_categories: finalCategories,
-      final_grade_items: finalItems
-    });
+    const backup = await buildGradebookBackupSnapshot(db, gradebook.id);
+    if (!backup) return res.status(404).json({ message: 'Gradebook not found.' });
+    res.json(backup);
   } catch (error) {
     console.error('3alamatak export error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post(['/api/3alamatak/gradebooks/:id/backups/validate', '/api/3alamatak/gradebooks/:id/backups/preview'], verifyToken, requireActiveTeacherOrAdmin, handleOptionalBackupUpload, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+
+    let payload = null;
+    if (req.file) {
+      const text = req.file.buffer.toString('utf8');
+      try {
+        payload = JSON.parse(text);
+      } catch (parseError) {
+        return res.status(400).json({
+          valid: false,
+          errors: ['Uploaded backup file is not valid JSON.'],
+          warnings: [],
+          counts: null,
+        });
+      }
+    } else if (req.body) {
+      payload = req.body.backupData || req.body.payload || req.body;
+      if (typeof payload === 'string') {
+        try { payload = JSON.parse(payload); } catch (_) {}
+      }
+    }
+
+    const validation = validateBackupPayload(payload, gradebook);
+    if (!validation.valid) {
+      return res.status(400).json(validation);
+    }
+
+    const [currStudents] = await db.query('SELECT COUNT(*) AS count FROM alamatak_students WHERE gradebook_id = ?', [gradebook.id]);
+    const [currAssessments] = await db.query('SELECT COUNT(*) AS count FROM alamatak_assessments WHERE gradebook_id = ?', [gradebook.id]);
+    const [currMarks] = await db.query('SELECT COUNT(*) AS count FROM alamatak_marks m JOIN alamatak_students s ON s.id = m.student_id WHERE s.gradebook_id = ?', [gradebook.id]);
+    const [currSchemes] = await db.query('SELECT COUNT(*) AS count FROM alamatak_grading_schemes WHERE gradebook_id = ?', [gradebook.id]);
+
+    const currentCounts = {
+      students: Number(currStudents[0].count),
+      assessments: Number(currAssessments[0].count),
+      marks: Number(currMarks[0].count),
+      schemes: Number(currSchemes[0].count),
+    };
+
+    res.json({
+      ...validation,
+      currentCounts,
+      targetGradebook: {
+        id: gradebook.id,
+        title: gradebook.title,
+        academicYear: gradebook.academic_year,
+      },
+    });
+  } catch (error) {
+    console.error('3alamatak backup validation error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/backups/restore', verifyToken, requireActiveTeacherOrAdmin, handleOptionalBackupUpload, async (req, res) => {
+  const connection = await db.getConnection();
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) {
+      connection.release();
+      return res.status(404).json({ message: 'Gradebook not found.' });
+    }
+
+    let payload = null;
+    if (req.file) {
+      const text = req.file.buffer.toString('utf8');
+      try {
+        payload = JSON.parse(text);
+      } catch (parseError) {
+        connection.release();
+        return res.status(400).json({ message: 'Uploaded backup file is not valid JSON.' });
+      }
+    } else if (req.body) {
+      payload = req.body.backupData || req.body.payload || req.body;
+      if (typeof payload === 'string') {
+        try { payload = JSON.parse(payload); } catch (_) {}
+      }
+    }
+
+    const validation = validateBackupPayload(payload, gradebook);
+    if (!validation.valid) {
+      connection.release();
+      return res.status(400).json({
+        message: 'Backup validation failed.',
+        errors: validation.errors,
+      });
+    }
+
+    // Step 1: Create Recovery Checkpoint before destructive mutation
+    const checkpoint = await createRecoveryCheckpoint(
+      connection,
+      gradebook.id,
+      req.user.id,
+      'pre_restore',
+      `Snapshot created before restoring backup '${payload.manifest?.sourceGradebook?.title || payload.gradebook?.title || 'Backup'}'`
+    );
+
+    // Step 2: Atomic transactional replace restore
+    await connection.beginTransaction();
+    try {
+      const result = await executeReplaceRestore(connection, gradebook.id, payload, req.user.id);
+      await connection.commit();
+      res.json({
+        message: 'Gradebook restored successfully.',
+        checkpointId: checkpoint?.id || null,
+        restoredCounts: result.restoredCounts,
+      });
+    } catch (restoreError) {
+      await connection.rollback();
+      throw restoreError;
+    }
+  } catch (error) {
+    console.error('3alamatak backup restore error:', error);
+    res.status(500).json({ message: error.message || 'Failed to restore gradebook backup.' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/checkpoints', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [rows] = await db.query(
+      'SELECT id, gradebook_id, created_by, reason, description, manifest, created_at FROM alamatak_checkpoints WHERE gradebook_id = ? ORDER BY created_at DESC, id DESC',
+      [gradebook.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('3alamatak checkpoints list error:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.post('/api/3alamatak/gradebooks/:id/checkpoints/:checkpointId/restore', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  const connection = await db.getConnection();
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) {
+      connection.release();
+      return res.status(404).json({ message: 'Gradebook not found.' });
+    }
+
+    const [checkpointRows] = await connection.query(
+      'SELECT * FROM alamatak_checkpoints WHERE id = ? AND gradebook_id = ?',
+      [req.params.checkpointId, gradebook.id]
+    );
+    if (!checkpointRows.length) {
+      connection.release();
+      return res.status(404).json({ message: 'Recovery checkpoint not found.' });
+    }
+
+    const checkpoint = checkpointRows[0];
+    const snapshot = typeof checkpoint.snapshot === 'string' ? JSON.parse(checkpoint.snapshot) : checkpoint.snapshot;
+
+    // Create a new checkpoint before rolling back to an older checkpoint
+    const newCheckpoint = await createRecoveryCheckpoint(
+      connection,
+      gradebook.id,
+      req.user.id,
+      'pre_checkpoint_rollback',
+      `Snapshot created before rolling back to checkpoint #${checkpoint.id}`
+    );
+
+    await connection.beginTransaction();
+    try {
+      const result = await executeReplaceRestore(connection, gradebook.id, snapshot, req.user.id);
+      await connection.commit();
+      res.json({
+        message: 'Gradebook recovered from checkpoint successfully.',
+        checkpointId: newCheckpoint?.id || null,
+        restoredCounts: result.restoredCounts,
+      });
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    }
+  } catch (error) {
+    console.error('3alamatak checkpoint restore error:', error);
+    res.status(500).json({ message: error.message || 'Failed to restore checkpoint.' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.delete('/api/3alamatak/gradebooks/:id/checkpoints/:checkpointId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [result] = await db.query(
+      'DELETE FROM alamatak_checkpoints WHERE id = ? AND gradebook_id = ?',
+      [req.params.checkpointId, gradebook.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ message: 'Checkpoint not found.' });
+    res.json({ message: 'Checkpoint deleted.' });
+  } catch (error) {
+    console.error('3alamatak checkpoint delete error:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 });

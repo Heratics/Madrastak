@@ -297,6 +297,21 @@ CREATE TABLE IF NOT EXISTS alamatak_historical_records (
   INDEX idx_alamatak_history_year (source_year)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS alamatak_checkpoints (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  gradebook_id INT NOT NULL,
+  created_by INT NOT NULL,
+  reason VARCHAR(100) NOT NULL DEFAULT 'pre_restore',
+  description VARCHAR(255) NULL,
+  manifest JSON NOT NULL,
+  snapshot JSON NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (gradebook_id) REFERENCES alamatak_gradebooks(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_alamatak_checkpoints_gradebook (gradebook_id),
+  INDEX idx_alamatak_checkpoints_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 2. Live Classes Table
 CREATE TABLE IF NOT EXISTS live_classes (
   id INT AUTO_INCREMENT PRIMARY KEY,

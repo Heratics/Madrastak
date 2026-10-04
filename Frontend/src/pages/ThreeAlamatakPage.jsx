@@ -30,6 +30,9 @@ import {
   Users,
   X,
   AlertTriangle,
+  Database,
+  ShieldCheck,
+  RotateCcw,
 } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
@@ -54,6 +57,7 @@ const views = [
   ['students', 'Students', Users],
   ['imports', 'Import', Upload],
   ['reports', 'Reports', BarChart3],
+  ['backups', 'Backup & Restore', Database],
   ['settings', 'Settings', Settings2],
 ];
 
@@ -70,6 +74,8 @@ export default function ThreeAlamatakPage() {
   const [schemes, setSchemes] = useState([]);
   const [historicalRecords, setHistoricalRecords] = useState([]);
   const [importHistory, setImportHistory] = useState([]);
+  const [checkpoints, setCheckpoints] = useState([]);
+  const [restorePreview, setRestorePreview] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
   const [marks, setMarks] = useState({});
@@ -104,6 +110,7 @@ export default function ThreeAlamatakPage() {
         setAssessments([]);
         setSchemes([]);
         setHistoricalRecords([]);
+        setCheckpoints([]);
         setAnalytics(null);
       }
     } finally {
@@ -115,7 +122,7 @@ export default function ThreeAlamatakPage() {
     if (!id) return;
     setBusy(true);
     try {
-      const [current, currentStudents, currentAssessments, currentAnalytics, currentSchemes, currentRecords, currentImports] = await Promise.all([
+      const [current, currentStudents, currentAssessments, currentAnalytics, currentSchemes, currentRecords, currentImports, currentCheckpoints] = await Promise.all([
         threeAlamatakApi.getGradebook(id),
         threeAlamatakApi.listStudents(id),
         threeAlamatakApi.listAssessments(id),
@@ -123,6 +130,7 @@ export default function ThreeAlamatakPage() {
         threeAlamatakApi.listSchemes(id).catch(() => []),
         threeAlamatakApi.listHistoricalRecords(id).catch(() => []),
         threeAlamatakApi.listImports(id).catch(() => []),
+        threeAlamatakApi.listCheckpoints(id).catch(() => []),
       ]);
       setGradebook(current);
       setStudents(currentStudents);
@@ -131,6 +139,7 @@ export default function ThreeAlamatakPage() {
       setSchemes(currentSchemes);
       setHistoricalRecords(currentRecords);
       setImportHistory(currentImports);
+      setCheckpoints(currentCheckpoints);
       setActiveAssessmentId((currentActive) =>
         currentAssessments.some((assessment) => assessment.id === currentActive)
           ? currentActive
@@ -321,6 +330,58 @@ export default function ThreeAlamatakPage() {
     await loadGradebooks();
     await loadWorkspace();
   }, 'Workspace refreshed.');
+
+  const exportCanonicalBackupJson = async () => {
+    if (!selectedId) return;
+    await runAction(async () => {
+      const data = await threeAlamatakApi.getBackup(selectedId);
+      downloadText(JSON.stringify(data, null, 2), `${safeFilename(gradebook?.title || '3alamatak')}_backup_v1.json`, 'application/json');
+    }, 'Canonical gradebook backup downloaded.');
+  };
+
+  const handleValidateBackupFile = async (file) => {
+    if (!file || !selectedId) return;
+    await runAction(async () => {
+      const res = await threeAlamatakApi.validateBackup(selectedId, file);
+      setRestorePreview({
+        file,
+        validation: res,
+      });
+    }, 'Backup file validated.');
+  };
+
+  const handleExecuteRestore = async () => {
+    if (!selectedId || !restorePreview?.file) return;
+    if (!window.confirm('Are you sure you want to replace this gradebook with the backup? All current records will be replaced. An automatic recovery checkpoint will be saved.')) {
+      return;
+    }
+    await runAction(async () => {
+      await threeAlamatakApi.restoreBackup(selectedId, restorePreview.file, 'replace');
+      setRestorePreview(null);
+      await loadWorkspace();
+    }, 'Gradebook restored successfully from backup.');
+  };
+
+  const handleRestoreCheckpoint = async (checkpointId) => {
+    if (!selectedId || !checkpointId) return;
+    if (!window.confirm('Roll back gradebook to this recovery checkpoint? An automatic checkpoint of the current state will be saved first.')) {
+      return;
+    }
+    await runAction(async () => {
+      await threeAlamatakApi.restoreCheckpoint(selectedId, checkpointId);
+      await loadWorkspace();
+    }, 'Recovery checkpoint restored.');
+  };
+
+  const handleDeleteCheckpoint = async (checkpointId) => {
+    if (!selectedId || !checkpointId) return;
+    if (!window.confirm('Delete this recovery checkpoint? This cannot be undone.')) return;
+    await runAction(async () => {
+      await threeAlamatakApi.deleteCheckpoint(selectedId, checkpointId);
+      const updated = await threeAlamatakApi.listCheckpoints(selectedId);
+      setCheckpoints(updated);
+    }, 'Checkpoint deleted.');
+  };
 
   const exportBackupJson = async () => {
     if (!selectedId) return;
@@ -641,6 +702,23 @@ export default function ThreeAlamatakPage() {
               onExportXml={exportBackupXml}
               onExportHtml={exportBackupHtml}
               onOpenPrint={() => setShowPrintModal(true)}
+            />
+          )}
+          {view === 'backups' && (
+            <BackupRestoreView
+              gradebookId={selectedId}
+              gradebook={gradebook}
+              checkpoints={checkpoints}
+              restorePreview={restorePreview}
+              setRestorePreview={setRestorePreview}
+              onExportJson={exportBackupJson}
+              onExportCanonicalJson={exportCanonicalBackupJson}
+              onExportXml={exportBackupXml}
+              onExportHtml={exportBackupHtml}
+              onValidateBackup={handleValidateBackupFile}
+              onExecuteRestore={handleExecuteRestore}
+              onRestoreCheckpoint={handleRestoreCheckpoint}
+              onDeleteCheckpoint={handleDeleteCheckpoint}
             />
           )}
           {view === 'settings' && <SettingsView gradebook={gradebook} onArchive={archiveGradebook} />}
@@ -1718,6 +1796,362 @@ function SettingsView({ gradebook, onArchive }) {
           <Trash2 className="h-4 w-4" /> Archive gradebook
         </button>
       )}
+    </div>
+  );
+}
+
+function BackupRestoreView({
+  gradebookId,
+  gradebook,
+  checkpoints,
+  restorePreview,
+  setRestorePreview,
+  onExportJson,
+  onExportCanonicalJson,
+  onExportXml,
+  onExportHtml,
+  onValidateBackup,
+  onExecuteRestore,
+  onRestoreCheckpoint,
+  onDeleteCheckpoint,
+}) {
+  if (!gradebookId || !gradebook) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500">
+        <Database className="mx-auto h-12 w-12 text-slate-400" />
+        <h3 className="mt-3 text-lg font-bold text-slate-700">No Gradebook Selected</h3>
+        <p className="mt-1 text-sm">Please select a gradebook from the sidebar to manage backups, restorations, and recovery checkpoints.</p>
+      </div>
+    );
+  }
+
+  const comparison = restorePreview?.validation?.comparison;
+  const manifest = restorePreview?.validation?.preview?.manifest;
+  const isValid = restorePreview?.validation?.valid;
+  const warnings = restorePreview?.validation?.warnings || [];
+  const errors = restorePreview?.validation?.errors || [];
+
+  return (
+    <div className="space-y-6">
+      {/* 1. Export Backups Card */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-teal-700">Export & Backup</p>
+          <h3 className="mt-1 text-xl font-black text-slate-900">Download Gradebook Backups</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Export full gradebook datasets including students, assessments, component marks, grading schemes, thresholds, final-grade weights, and historical records.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          {/* Canonical Backup Card */}
+          <div className="flex flex-col justify-between rounded-xl border-2 border-teal-500/30 bg-teal-50/30 p-5">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="rounded-md bg-teal-600 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-white">
+                  Format v1 (Recommended)
+                </span>
+                <Database className="h-5 w-5 text-teal-600" />
+              </div>
+              <h4 className="mt-3 font-black text-slate-900">Canonical JSON Backup</h4>
+              <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
+                Complete structured relational snapshot with verified manifest, entity counts, student aliases, final grade configs, and analytics settings.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onExportCanonicalJson}
+              className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-teal-700 px-4 text-xs font-bold text-white shadow-sm hover:bg-teal-600"
+            >
+              <Download className="h-4 w-4" /> Download Format v1 JSON
+            </button>
+          </div>
+
+          {/* Standalone HTML Markbook Card */}
+          <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-slate-50/50 p-5">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">
+                  Interactive Report
+                </span>
+                <FileCode className="h-5 w-5 text-slate-600" />
+              </div>
+              <h4 className="mt-3 font-black text-slate-900">Self-Contained HTML</h4>
+              <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
+                Standalone interactive HTML report with embedded markbook payload. Can be viewed in any web browser without an active connection or re-imported later.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onExportHtml}
+              className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-xs font-bold text-slate-700 hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" /> Download HTML Report
+            </button>
+          </div>
+
+          {/* XML Card */}
+          <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-slate-50/50 p-5">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">
+                  Interoperable XML
+                </span>
+                <FileText className="h-5 w-5 text-slate-600" />
+              </div>
+              <h4 className="mt-3 font-black text-slate-900">XML Export</h4>
+              <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
+                XML representation compatible with legacy 3alamatak desktop exchange formats and external tooling.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onExportXml}
+              className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-xs font-bold text-slate-700 hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" /> Download XML
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Restore from Backup Card */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-teal-700">Restore & Recovery</p>
+          <h3 className="mt-1 text-xl font-black text-slate-900">Restore Gradebook from Backup</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Upload a JSON (Format v1), XML, or standalone HTML backup file. The backup will be validated and compared against the target gradebook before restoring.
+          </p>
+        </div>
+
+        {!restorePreview && (
+          <label className="flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 text-center hover:border-teal-400 transition">
+            <Upload className="h-7 w-7 text-teal-600" />
+            <span className="mt-2 text-sm font-bold text-slate-700">Choose Backup File (.json, .xml, .html)</span>
+            <span className="text-xs text-slate-400">Up to 20MB supported · Safe replace strategy with automatic checkpoint</span>
+            <input
+              type="file"
+              accept=".json,.xml,.html"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onValidateBackup(file);
+              }}
+              className="hidden"
+            />
+          </label>
+        )}
+
+        {restorePreview && (
+          <div className="mt-4 space-y-5">
+            {/* Validation Banner */}
+            {isValid ? (
+              <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
+                <ShieldCheck className="h-6 w-6 shrink-0 text-emerald-600" />
+                <div>
+                  <h4 className="font-bold text-sm">Backup Validated Successfully</h4>
+                  <p className="text-xs text-emerald-700">
+                    Format: {restorePreview.validation.format} (Version {restorePreview.validation.backupFormatVersion || '1'}) · Relational integrity and manifest verified.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-900">
+                <AlertTriangle className="h-6 w-6 shrink-0 text-red-600" />
+                <div>
+                  <h4 className="font-bold text-sm">Backup Validation Failed</h4>
+                  <ul className="mt-1 list-disc pl-4 text-xs space-y-1">
+                    {errors.map((err, i) => (
+                      <li key={i}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {warnings.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+                <p className="font-bold text-xs uppercase tracking-wider">Validation Warnings</p>
+                <ul className="mt-1 list-disc pl-4 text-xs space-y-1">
+                  {warnings.map((warn, i) => (
+                    <li key={i}>{warn}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Snapshot Comparison Table */}
+            <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">
+                  Pre-Restore Comparison: Target Gradebook vs Backup Snapshot
+                </h4>
+              </div>
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-100/60 font-bold text-slate-600 uppercase tracking-wider text-[11px]">
+                    <th className="px-4 py-2.5">Entity / Metric</th>
+                    <th className="px-4 py-2.5">Current Gradebook</th>
+                    <th className="px-4 py-2.5">Incoming Backup Snapshot</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  <tr>
+                    <td className="px-4 py-2.5 font-bold text-slate-700">Gradebook Title / Year</td>
+                    <td className="px-4 py-2.5 text-slate-600">{gradebook.title} ({gradebook.academic_year || '—'})</td>
+                    <td className="px-4 py-2.5 font-bold text-teal-700">{restorePreview.validation.preview?.gradebook?.title} ({restorePreview.validation.preview?.gradebook?.academic_year || '—'})</td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2.5 font-bold text-slate-700">Students</td>
+                    <td className="px-4 py-2.5 text-slate-600">{comparison?.current?.students ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-bold text-teal-700">{comparison?.incoming?.students ?? manifest?.students ?? '—'}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2.5 font-bold text-slate-700">Assessments</td>
+                    <td className="px-4 py-2.5 text-slate-600">{comparison?.current?.assessments ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-bold text-teal-700">{comparison?.incoming?.assessments ?? manifest?.assessments ?? '—'}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2.5 font-bold text-slate-700">Marks / Scores</td>
+                    <td className="px-4 py-2.5 text-slate-600">{comparison?.current?.marks ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-bold text-teal-700">{comparison?.incoming?.marks ?? manifest?.marks ?? '—'}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2.5 font-bold text-slate-700">Grading Schemes & Thresholds</td>
+                    <td className="px-4 py-2.5 text-slate-600">{comparison?.current?.schemes ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-bold text-teal-700">{comparison?.incoming?.schemes ?? manifest?.schemes ?? '—'}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2.5 font-bold text-slate-700">Final Grade Configuration</td>
+                    <td className="px-4 py-2.5 text-slate-600">{comparison?.current?.finalGradeConfig ? 'Configured' : 'None'}</td>
+                    <td className="px-4 py-2.5 font-bold text-teal-700">{comparison?.incoming?.finalGradeConfig ? 'Configured' : 'None'}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2.5 font-bold text-slate-700">Historical Records</td>
+                    <td className="px-4 py-2.5 text-slate-600">{comparison?.current?.historicalRecords ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-bold text-teal-700">{comparison?.incoming?.historicalRecords ?? manifest?.historicalRecords ?? '—'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Replace Warning Notice */}
+            <div className="rounded-xl border border-amber-300 bg-amber-50/70 p-4 text-xs text-amber-950">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
+                <div>
+                  <span className="font-bold">Replace Strategy Notice: </span>
+                  Executing restore will atomically replace all current students, assessments, marks, schemes, and configurations in <strong>{gradebook.title}</strong> with the backup snapshot. An automatic recovery checkpoint will be created before any changes are written.
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={!isValid}
+                onClick={onExecuteRestore}
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-teal-700 px-5 text-sm font-bold text-white shadow-sm hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <RotateCcw className="h-4 w-4" /> Replace Target Gradebook with Backup
+              </button>
+              <button
+                type="button"
+                onClick={() => setRestorePreview(null)}
+                className="min-h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3. Automatic Recovery Checkpoints Card */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-teal-700">Checkpoints & Safety</p>
+              <h3 className="mt-1 text-xl font-black text-slate-900">Automatic Recovery Checkpoints</h3>
+            </div>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+              {checkpoints.length} / 10 retained
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-slate-500">
+            Madrastak automatically captures a recovery checkpoint before every destructive restore or rollback. You can restore your gradebook to any checkpoint at any time.
+          </p>
+        </div>
+
+        {checkpoints.length > 0 ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 font-bold text-slate-600 uppercase tracking-wider text-[11px]">
+                  <th className="px-4 py-3">Created At</th>
+                  <th className="px-4 py-3">Reason</th>
+                  <th className="px-4 py-3">Snapshot Summary</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {checkpoints.map((cp) => {
+                  const cpManifest = cp.manifest || {};
+                  return (
+                    <tr key={cp.id}>
+                      <td className="px-4 py-3 font-semibold text-slate-800">
+                        {new Date(cp.created_at).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
+                          {cp.reason || 'Pre-restore checkpoint'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {cpManifest.students ?? '—'} students · {cpManifest.assessments ?? '—'} assessments · {cpManifest.marks ?? '—'} marks · {cpManifest.schemes ?? '—'} schemes
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onRestoreCheckpoint(cp.id)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-800 hover:bg-teal-100"
+                          >
+                            <RotateCcw className="h-3 w-3" /> Rollback
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteCheckpoint(cp.id)}
+                            className="inline-flex items-center rounded-lg border border-slate-200 p-1 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                            title="Delete checkpoint"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rounded-xl bg-slate-50 p-6 text-center text-xs text-slate-500">
+            No recovery checkpoints yet. Checkpoints are automatically generated whenever a restore is performed.
+          </div>
+        )}
+
+        {/* Informational distinction notice */}
+        <div className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-600 border border-slate-200">
+          <Info className="h-4 w-4 shrink-0 text-slate-400 mt-0.5" />
+          <div>
+            <strong>Import Rollback vs. Backup Restore: </strong>
+            To rollback an individual spreadsheet import without affecting other assessments, visit the <strong>Import History</strong> tab. To restore the complete gradebook state, use this <strong>Backup & Restore</strong> tab.
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

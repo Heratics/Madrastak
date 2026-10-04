@@ -83,6 +83,7 @@ export default function ThreeAlamatakPage() {
   const [editingStudent, setEditingStudent] = useState(null);
   const [editingAssessment, setEditingAssessment] = useState(null);
   const [editingRecord, setEditingRecord] = useState(null);
+  const [showRecordForm, setShowRecordForm] = useState(false);
   const [showSchemeForm, setShowSchemeForm] = useState(false);
   const [editingScheme, setEditingScheme] = useState(null);
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -280,6 +281,10 @@ export default function ThreeAlamatakPage() {
       await threeAlamatakApi.deleteHistoricalRecord(record.id);
       await loadWorkspace();
     }, 'Record deleted.');
+  };
+
+  const createRecord = async (payload) => {
+    await runAction(async () => { await threeAlamatakApi.createHistoricalRecord(selectedId, payload); setShowRecordForm(false); await loadWorkspace(); }, 'Record created.');
   };
 
   const removeStudent = async (studentId) => {
@@ -625,6 +630,7 @@ export default function ThreeAlamatakPage() {
           )}
           {view === 'reports' && (
             <ReportsView
+              gradebookId={selectedId}
               gradebook={gradebook}
               students={students}
               assessments={assessments}
@@ -661,6 +667,8 @@ export default function ThreeAlamatakPage() {
               onSaveMarks={() => runAction(async () => { await threeAlamatakApi.saveMarks(activeAssessment.id, Object.values(marks)); await loadWorkspace(); }, 'Marks saved to Aiven.')}
               onEditRecord={setEditingRecord}
               onDeleteRecord={deleteRecord}
+              onAddRecord={() => setShowRecordForm(true)}
+              onOpenReports={() => setView('reports')}
               analytics={analytics}
             />
           )}
@@ -673,6 +681,7 @@ export default function ThreeAlamatakPage() {
       {editingStudent && selectedId && <StudentForm student={editingStudent} onCancel={() => setEditingStudent(null)} onSubmit={editStudent} />}
       {showAssessmentForm && selectedId && <AssessmentForm assessment={editingAssessment} onCancel={() => { setShowAssessmentForm(false); setEditingAssessment(null); }} onSubmit={editingAssessment ? saveAssessment : createAssessment} />}
       {editingRecord && <RecordForm record={editingRecord} onCancel={() => setEditingRecord(null)} onSubmit={saveRecord} />}
+      {showRecordForm && selectedId && <RecordForm gradebookYear={gradebook?.academic_year} students={students} onCancel={() => setShowRecordForm(false)} onSubmit={createRecord} />}
       {showSchemeForm && selectedId && <SchemeForm onCancel={() => setShowSchemeForm(false)} onSubmit={createScheme} />}
       {editingScheme && selectedId && <SchemeForm scheme={editingScheme} onCancel={() => setEditingScheme(null)} onSubmit={updateScheme} />}
       {showPrintModal && gradebook && (
@@ -803,6 +812,8 @@ function WorkspaceView({
   onSaveMarks,
   onEditRecord,
   onDeleteRecord,
+  onAddRecord,
+  onOpenReports,
   analytics,
 }) {
   const [tab, setTab] = useState('markbook');
@@ -816,6 +827,7 @@ function WorkspaceView({
           ['final-grades', 'Final Grades'],
           ['schemes', 'Grading Schemes'],
           ['records', 'Records & History'],
+          ['reports', 'Reports'],
           ['imports', 'Import History'],
           ['analytics', 'Analytics'],
         ].map(([key, label]) => (
@@ -879,7 +891,14 @@ function WorkspaceView({
         <SchemesTab schemes={schemes} onAddScheme={onAddScheme} onEditScheme={onEditScheme} onDeleteScheme={onDeleteScheme} />
       )}
       {tab === 'records' && (
-        <RecordsTab records={historicalRecords} onEdit={onEditRecord} onDelete={onDeleteRecord} />
+        <RecordsTab records={historicalRecords} students={students} onAdd={onAddRecord} onEdit={onEditRecord} onDelete={onDeleteRecord} />
+      )}
+      {tab === 'reports' && (
+        <div className="p-5">
+          <h3 className="font-black">Reports workspace</h3>
+          <p className="mt-1 text-sm text-slate-500">Open consolidated student, assessment, print, and export reports for this gradebook.</p>
+          <button type="button" onClick={onOpenReports} className="mt-4 rounded-xl bg-teal-700 px-4 py-2 text-sm font-bold text-white">Open reports</button>
+        </div>
       )}
       {tab === 'imports' && <ImportHistoryTab gradebookId={gradebookId} imports={importHistory} />}
       {tab === 'analytics' && <Analytics analytics={analytics} students={students} />}
@@ -1100,7 +1119,7 @@ function recordDetails(record) {
     .map(([key, value]) => `${labels[key] || key.replace(/_/g, ' ')}: ${Array.isArray(value) ? value.join(', ') : String(value)}`);
 }
 
-function RecordsTab({ records, onEdit, onDelete }) {
+function RecordsTab({ records, students, onAdd, onEdit, onDelete }) {
   const [filter, setFilter] = useState('all');
   const filtered = useMemo(() => {
     if (filter === 'all') return records;
@@ -1114,7 +1133,7 @@ function RecordsTab({ records, onEdit, onDelete }) {
           <h3 className="font-black text-lg">Activity & Historical Records</h3>
           <p className="text-xs text-slate-500">Persisted student conduct notes, assignments, team projects, and historical year archives.</p>
         </div>
-        <div className="flex flex-wrap gap-1.5 rounded-xl bg-slate-100 p-1">
+        <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={onAdd} className="rounded-xl bg-teal-700 px-3 py-2 text-xs font-bold text-white">Add record</button><div className="flex flex-wrap gap-1.5 rounded-xl bg-slate-100 p-1">
           {[
             ['all', 'All'],
             ['behavior', 'Conduct'],
@@ -1133,7 +1152,7 @@ function RecordsTab({ records, onEdit, onDelete }) {
               {label}
             </button>
           ))}
-        </div>
+        </div></div>
       </div>
 
       <div className="overflow-x-auto">
@@ -1592,6 +1611,7 @@ function ImportView({
 }
 
 function ReportsView({
+  gradebookId,
   gradebook,
   students,
   assessments,
@@ -1602,8 +1622,12 @@ function ReportsView({
   onExportHtml,
   onOpenPrint,
 }) {
+  const [studentId, setStudentId] = useState(''); const [studentReport, setStudentReport] = useState(null); const [assessmentId, setAssessmentId] = useState(''); const [assessmentReport, setAssessmentReport] = useState(null); const [error, setError] = useState('');
+  const loadStudentReport = async () => { if (!studentId) return; try { setStudentReport(await threeAlamatakApi.getStudentReport(gradebookId, studentId)); setError(''); } catch (e) { setError(e.message); } };
+  const loadAssessmentReport = async () => { if (!assessmentId) return; try { setAssessmentReport(await threeAlamatakApi.getAssessmentReport(gradebookId, assessmentId)); setError(''); } catch (e) { setError(e.message); } };
   return (
-    <div className="grid gap-5 lg:grid-cols-2">
+    <div className="space-y-5">
+      <div className="grid gap-5 lg:grid-cols-2">
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-black">Export data</h3>
         <p className="mt-1 text-sm text-slate-500">Create portable backups and printable records from Aiven.</p>
@@ -1656,6 +1680,12 @@ function ReportsView({
           <Stat label="Lowest" value={analytics?.lowest == null ? '—' : `${analytics.lowest.toFixed(1)}%`} />
         </div>
       </div>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="font-black">Student report</h3><div className="mt-3 flex gap-2"><select value={studentId} onChange={(event) => setStudentId(event.target.value)} className="min-h-10 flex-1 rounded-xl border border-slate-200 px-2"><option value="">Select student</option>{students.map((student) => <option key={student.id} value={student.id}>{student.display_name}</option>)}</select><button type="button" onClick={loadStudentReport} className="rounded-xl bg-teal-700 px-3 text-xs font-bold text-white">Open</button></div>{studentReport && <div className="mt-4 text-sm"><p className="font-bold">{studentReport.student.display_name} · {studentReport.student.external_student_id || studentReport.student.email || 'No identifier'}</p><p className="mt-1">Status: {studentReport.student.status} · Final: {studentReport.student.final_grade || '—'} · {studentReport.student.final_status || 'Not ready'}</p><SimpleTable headers={['Assessment', 'Component', 'Score', 'Status']} rows={studentReport.marks.map((mark) => [mark.assessment_title, mark.component_name, mark.score == null ? '—' : `${mark.score}/${mark.maximum_score}`, mark.mark_status || 'Complete'])} /></div>}</div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="font-black">Assessment report</h3><div className="mt-3 flex gap-2"><select value={assessmentId} onChange={(event) => setAssessmentId(event.target.value)} className="min-h-10 flex-1 rounded-xl border border-slate-200 px-2"><option value="">Select assessment</option>{assessments.map((assessment) => <option key={assessment.id} value={assessment.id}>{assessment.title}</option>)}</select><button type="button" onClick={loadAssessmentReport} className="rounded-xl bg-teal-700 px-3 text-xs font-bold text-white">Open</button></div>{assessmentReport && <div className="mt-4 text-sm"><p className="font-bold">{assessmentReport.assessment.title}</p><p className="mt-1">Average {assessmentReport.summary.average == null ? '—' : `${assessmentReport.summary.average.toFixed(1)}%`} · Median {assessmentReport.summary.median == null ? '—' : `${assessmentReport.summary.median.toFixed(1)}%`}</p><p className="mt-1 text-xs text-slate-500">Completion {assessmentReport.summary.completion.toFixed(1)}% · Missing {assessmentReport.summary.missing} · Absent {assessmentReport.summary.absent}</p><SimpleTable headers={['Student', 'Component', 'Score', 'Status']} rows={assessmentReport.rows.map((row) => [row.display_name, row.component_name, row.score == null ? '—' : `${row.score}/${row.maximum_score}`, row.mark_status || 'Complete'])} /></div>}</div>
+      </div>
+      {error && <p className="text-sm font-bold text-red-700">{error}</p>}
     </div>
   );
 }
@@ -1879,16 +1909,20 @@ function AssessmentForm({ assessment, onCancel, onSubmit }) {
   );
 }
 
-function RecordForm({ record, onCancel, onSubmit }) {
+function RecordForm({ record, students = [], gradebookYear = '', onCancel, onSubmit }) {
+  const [recordType, setRecordType] = useState(record?.record_type || 'assignment');
+  const [studentId, setStudentId] = useState(record?.student_id || '');
+  const [sourceYear, setSourceYear] = useState(record?.source_year || gradebookYear);
   const [payload, setPayload] = useState(() => recordPayload(record));
   const set = (key, value) => setPayload((current) => ({ ...current, [key]: value }));
   const fields = ['title', 'status', 'note', 'category', 'topic', 'aim', 'issue', 'leader', 'task', 'action_plan', 'progress', 'timeline', 'due_date', 'date_submitted'];
   return (
-    <Modal title={`Edit ${String(record.record_type || 'record').replace('_', ' ')}`} onCancel={onCancel}>
+    <Modal title={`${record ? 'Edit' : 'Add'} ${String(recordType || 'record').replace('_', ' ')}`} onCancel={onCancel}>
+      {!record && <><label className="mb-3 block text-xs font-bold text-slate-600">Record type<select value={recordType} onChange={(event) => setRecordType(event.target.value)} className="mt-1 block min-h-10 w-full rounded-xl border border-slate-200 px-3"><option value="assignment">Assignment</option><option value="behavior">Conduct / Behavior</option><option value="team_project">Team Project</option><option value="historical">Historical</option></select></label><label className="mb-3 block text-xs font-bold text-slate-600">Student<select value={studentId} onChange={(event) => setStudentId(event.target.value)} className="mt-1 block min-h-10 w-full rounded-xl border border-slate-200 px-3"><option value="">Class-level record</option>{students.map((student) => <option key={student.id} value={student.id}>{student.display_name}</option>)}</select></label><Field label="Source year" value={sourceYear} onChange={setSourceYear} /></>}
       {fields.map((key) => (
         <Field key={key} label={key.replace(/_/g, ' ')} value={payload[key] || ''} onChange={(value) => set(key, value)} />
       ))}
-      <FormActions onCancel={onCancel} onSubmit={() => onSubmit({ record_type: record.record_type, source_year: record.source_year, student_id: record.student_id, payload })} label="Save record" />
+      <FormActions onCancel={onCancel} onSubmit={() => onSubmit({ record_type: recordType, source_year: sourceYear, student_id: studentId || null, payload })} label={record ? 'Save record' : 'Create record'} />
     </Modal>
   );
 }

@@ -23,7 +23,7 @@ test('3alamatak Multi-Teacher Isolation & Import Compatibility Suite', async (t)
   const baseUrl = `http://127.0.0.1:${port}`;
 
   let teacherA, teacherB, adminUser;
-  let gradebookAId, gradebookBId, assessmentBId;
+  let gradebookAId, gradebookBId, assessmentBId, studentBId;
 
   try {
     // 1. Fetch existing accounts from DB
@@ -117,6 +117,7 @@ test('3alamatak Multi-Teacher Isolation & Import Compatibility Suite', async (t)
       signal: AbortSignal.timeout(5000),
     });
     assert.strictEqual(resStudentB.status, 201);
+    studentBId = (await resStudentB.json()).id;
 
     // ----------------------------------------------------------------------
     // TEST 1: Teacher A gradebook listing ONLY includes Teacher A's gradebooks
@@ -320,6 +321,37 @@ test('3alamatak Multi-Teacher Isolation & Import Compatibility Suite', async (t)
       const finalView = await configResponse.json();
       assert.equal(finalView.readiness.valid, true);
       assert.ok(finalView.results.length >= 1);
+    });
+
+    await t.test('Reports and historical record creation are owner-scoped', async () => {
+      const headersB = { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenB}` };
+      const createRecord = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/historical-records`, {
+        method: 'POST', headers: headersB,
+        body: JSON.stringify({ record_type: 'behavior', student_id: studentBId, source_year: '2026-2027', payload: { category: 'Positive', note: 'Consistent participation' } }),
+      });
+      assert.strictEqual(createRecord.status, 201);
+      const record = await createRecord.json();
+      assert.equal(record.record_type, 'behavior');
+
+      const forbiddenStudentReport = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/reports/student/${studentBId}`, { headers: { Authorization: `Bearer ${tokenA}` } });
+      assert.strictEqual(forbiddenStudentReport.status, 404);
+      const studentReport = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/reports/student/${studentBId}`, { headers: headersB });
+      assert.strictEqual(studentReport.status, 200);
+      const studentReportJson = await studentReport.json();
+      assert.ok(Array.isArray(studentReportJson.marks));
+      assert.ok(studentReportJson.records.some((item) => item.id === record.id));
+
+      const assessmentReport = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/reports/assessment/${assessmentBId}`, { headers: headersB });
+      assert.strictEqual(assessmentReport.status, 200);
+      const assessmentReportJson = await assessmentReport.json();
+      assert.ok(Array.isArray(assessmentReportJson.rows));
+      assert.ok('completion' in assessmentReportJson.summary);
+
+      const forbiddenCreate = await fetch(`${baseUrl}/api/3alamatak/gradebooks/${gradebookBId}/historical-records`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ record_type: 'behavior', student_id: studentBId, source_year: '2026-2027', payload: { note: 'No access' } }),
+      });
+      assert.strictEqual(forbiddenCreate.status, 404);
     });
 
     await t.test('Gradebook lifecycle supports edit, archive filtering, restore, and permanent deletion', async () => {

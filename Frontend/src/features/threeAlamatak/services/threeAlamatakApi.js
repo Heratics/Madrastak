@@ -44,6 +44,8 @@ export const threeAlamatakApi = {
   getMarks: (id) => request(`/api/3alamatak/assessments/${id}/marks`),
   saveMarks: (id, marks) => request(`/api/3alamatak/assessments/${id}/marks`, { method: 'PUT', body: JSON.stringify({ marks }) }),
   getAnalytics: (id) => request(`/api/3alamatak/gradebooks/${id}/analytics`),
+  getStudentReport: (gradebookId, studentId) => request(`/api/3alamatak/gradebooks/${gradebookId}/reports/student/${studentId}`),
+  getAssessmentReport: (gradebookId, assessmentId) => request(`/api/3alamatak/gradebooks/${gradebookId}/reports/assessment/${assessmentId}`),
   getFinalGrades: (id) => request(`/api/3alamatak/gradebooks/${id}/final-grades`),
   saveFinalGradeConfig: (id, payload) => request(`/api/3alamatak/gradebooks/${id}/final-grades/config`, { method: 'PUT', body: JSON.stringify(payload) }),
   finalizeFinalGrades: (id) => request(`/api/3alamatak/gradebooks/${id}/final-grades/finalize`, { method: 'POST' }),
@@ -74,6 +76,7 @@ export const threeAlamatakApi = {
     const q = new URLSearchParams(params).toString();
     return request(`/api/3alamatak/gradebooks/${id}/historical-records${q ? `?${q}` : ''}`);
   },
+  createHistoricalRecord: (gradebookId, payload) => request(`/api/3alamatak/gradebooks/${gradebookId}/historical-records`, { method: 'POST', body: JSON.stringify(payload) }),
   listImports: (id) => request(`/api/3alamatak/gradebooks/${id}/imports`),
   getImport: (id, importId) => request(`/api/3alamatak/gradebooks/${id}/imports/${importId}`),
   rollbackImport: (id, importId) => request(`/api/3alamatak/gradebooks/${id}/imports/${importId}/rollback`, { method: 'POST' }),

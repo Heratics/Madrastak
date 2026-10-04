@@ -1487,6 +1487,40 @@ app.get('/api/3alamatak/gradebooks/:id/final-grades/export', verifyToken, requir
   } catch (error) { res.status(500).json({ message: 'Final-grade export failed.' }); }
 });
 
+app.get('/api/3alamatak/gradebooks/:id/reports/student/:studentId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const view = await loadFinalGradeView(req, req.params.id); if (!view) return res.status(404).json({ message: 'Gradebook not found.' });
+    const student = view.results.find((result) => Number(result.student_id) === Number(req.params.studentId));
+    if (!student) return res.status(404).json({ message: 'Student not found.' });
+    const [studentRows] = await db.query(
+      'SELECT id, first_name, last_name, display_name, external_student_id, email, status, gradebook_id FROM alamatak_students WHERE id = ? AND gradebook_id = ?',
+      [student.student_id, view.gradebook.id]
+    );
+    if (!studentRows.length) return res.status(404).json({ message: 'Student not found.' });
+    const [marks] = await db.query(`SELECT m.*, c.assessment_id, c.name AS component_name, c.maximum_score, a.title AS assessment_title, a.assessment_date
+      FROM alamatak_marks m JOIN alamatak_assessment_components c ON c.id = m.component_id JOIN alamatak_assessments a ON a.id = c.assessment_id
+      WHERE a.gradebook_id = ? AND m.student_id = ? ORDER BY a.assessment_date, a.id, c.sort_order`, [view.gradebook.id, student.student_id]);
+    const [records] = await db.query('SELECT id, record_type, source_year, payload, created_at FROM alamatak_historical_records WHERE gradebook_id = ? AND student_id = ? ORDER BY created_at DESC', [view.gradebook.id, student.student_id]);
+    res.json({ gradebook: view.gradebook, student: { ...student, ...studentRows[0], final_grade: student.final_grade, final_status: student.status }, marks, records });
+  } catch (error) { res.status(500).json({ message: 'Student report failed.' }); }
+});
+
+app.get('/api/3alamatak/gradebooks/:id/reports/assessment/:assessmentId', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id); if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const [assessmentRows] = await db.query('SELECT id, title, assessment_date FROM alamatak_assessments WHERE id = ? AND gradebook_id = ?', [req.params.assessmentId, gradebook.id]);
+    if (!assessmentRows.length) return res.status(404).json({ message: 'Assessment not found.' });
+    const [rows] = await db.query(`SELECT s.id AS student_id, s.display_name, c.id AS component_id, c.name AS component_name, c.maximum_score, m.score, m.mark_status
+      FROM alamatak_students s CROSS JOIN alamatak_assessment_components c JOIN alamatak_assessments a ON a.id = c.assessment_id
+      LEFT JOIN alamatak_marks m ON m.student_id = s.id AND m.component_id = c.id
+      WHERE s.gradebook_id = ? AND s.status <> 'archived' AND a.id = ? ORDER BY s.display_name, c.sort_order`, [gradebook.id, req.params.assessmentId]);
+    const percentages = rows.filter((row) => row.score !== null && Number(row.maximum_score) > 0).map((row) => Number(row.score) / Number(row.maximum_score) * 100).sort((a, b) => a - b);
+    const average = percentages.length ? percentages.reduce((sum, value) => sum + value, 0) / percentages.length : null;
+    const median = percentages.length ? (percentages.length % 2 ? percentages[(percentages.length - 1) / 2] : (percentages[percentages.length / 2 - 1] + percentages[percentages.length / 2]) / 2) : null;
+    res.json({ gradebook, assessment: assessmentRows[0], rows, summary: { average, median, highest: percentages.at(-1) ?? null, lowest: percentages[0] ?? null, completion: rows.length ? rows.filter((row) => row.score !== null || row.mark_status).length / rows.length * 100 : 0, absent: rows.filter((row) => /absent/i.test(row.mark_status || '')).length, missing: rows.filter((row) => row.score === null && !row.mark_status).length } });
+  } catch (error) { res.status(500).json({ message: 'Assessment report failed.' }); }
+});
+
 app.get('/api/3alamatak/gradebooks/:id/analytics', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   try {
     const gradebook = await getAlamatakGradebook(req, req.params.id);
@@ -1825,6 +1859,23 @@ async function getOwnedHistoricalRecord(req, recordId) {
   );
   return rows[0] || null;
 }
+
+app.post('/api/3alamatak/gradebooks/:id/historical-records', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradebook = await getAlamatakGradebook(req, req.params.id);
+    if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
+    const { record_type, source_year = gradebook.academic_year, student_id = null, payload } = req.body || {};
+    if (!['assignment', 'behavior', 'team_project', 'historical'].includes(String(record_type))) return res.status(400).json({ message: 'Unsupported record type.' });
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return res.status(400).json({ message: 'A structured record payload is required.' });
+    if (student_id != null) {
+      const [students] = await db.query('SELECT id FROM alamatak_students WHERE id = ? AND gradebook_id = ?', [student_id, gradebook.id]);
+      if (!students.length) return res.status(400).json({ message: 'Student does not belong to this gradebook.' });
+    }
+    const [result] = await db.query('INSERT INTO alamatak_historical_records (gradebook_id, student_id, record_type, source_year, payload) VALUES (?, ?, ?, ?, ?)', [gradebook.id, student_id || null, String(record_type), source_year || gradebook.academic_year, JSON.stringify(payload)]);
+    const [rows] = await db.query('SELECT id, gradebook_id, student_id, record_type, source_year, payload, created_at FROM alamatak_historical_records WHERE id = ?', [result.insertId]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(400).json({ message: error.message || 'Failed to create record.' }); }
+});
 
 app.put('/api/3alamatak/historical-records/:id', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
   try {

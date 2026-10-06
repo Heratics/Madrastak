@@ -12,6 +12,7 @@ const workbookParser = require('./workbookParser');
 const { persistImportTransaction } = require('./importPersistence');
 const { filterGradebooksForList } = require('./gradebookAccess');
 const { calculateFinalGrades, validateThresholdScheme } = require('./finalGradeCalculator');
+const { validateComponentDefinitions, calculateComponentMarks } = require('./componentCalculation');
 const {
   buildGradebookBackupSnapshot,
   validateBackupPayload,
@@ -1201,14 +1202,9 @@ async function getOwnedAssessment(req, assessmentId) {
 
 function normalizeAssessmentComponents(components) {
   if (!Array.isArray(components) || components.length === 0) return null;
-  const normalized = components.map((component, index) => ({
-    id: component.id ? Number(component.id) : null,
-    name: String(component.name || '').trim(),
-    maximum_score: Number(component.maximum_score ?? component.max),
-    sort_order: Number.isInteger(component.sort_order) ? component.sort_order : index,
-  }));
-  if (normalized.some((component) => !component.name || !Number.isFinite(component.maximum_score) || component.maximum_score < 0)) return null;
-  return normalized;
+  const validation = validateComponentDefinitions(components);
+  if (!validation.valid) return null;
+  return validation.components;
 }
 
 app.get('/api/3alamatak/gradebooks/:id/assessments', verifyToken, requireActiveTeacherOrAdmin, async (req, res) => {
@@ -1224,7 +1220,7 @@ app.get('/api/3alamatak/gradebooks/:id/assessments', verifyToken, requireActiveT
       [gradebook.id]
     );
     const [components] = await db.query(
-      `SELECT c.id, c.assessment_id, c.name, c.maximum_score, c.sort_order
+      `SELECT c.id, c.assessment_id, c.name, c.maximum_score, c.sort_order, c.component_type, c.calculation_type, c.source_component_ids, c.formula_definition
        FROM alamatak_assessment_components c
        JOIN alamatak_assessments a ON a.id = c.assessment_id
        WHERE a.gradebook_id = ?
@@ -1259,11 +1255,35 @@ app.post('/api/3alamatak/gradebooks/:id/assessments', verifyToken, requireActive
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [gradebook.id, String(title).trim(), strand, topic, assessment_date || null, source_import_id || null, Boolean(is_historical), source_year || null]
       );
+      const insertedCompMap = new Map();
+      const pendingCalculated = [];
       for (const component of components) {
-        await connection.query(
+        const [compRes] = await connection.query(
           `INSERT INTO alamatak_assessment_components
-           (assessment_id, name, maximum_score, sort_order) VALUES (?, ?, ?, ?)`,
-          [assessmentResult.insertId, component.name, component.maximum_score, component.sort_order]
+           (assessment_id, name, maximum_score, sort_order, component_type, calculation_type, source_component_ids, formula_definition)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            assessmentResult.insertId,
+            component.name,
+            component.maximum_score,
+            component.sort_order,
+            component.component_type || 'input',
+            component.calculation_type || null,
+            component.source_component_ids ? JSON.stringify(component.source_component_ids) : null,
+            component.formula_definition ? JSON.stringify(component.formula_definition) : null,
+          ]
+        );
+        insertedCompMap.set(String(component.id), compRes.insertId);
+        if (component.rawId) insertedCompMap.set(String(component.rawId), compRes.insertId);
+        if (component.component_type === 'calculated') {
+          pendingCalculated.push({ insertId: compRes.insertId, sourceIds: component.source_component_ids });
+        }
+      }
+      for (const calc of pendingCalculated) {
+        const remapped = (calc.sourceIds || []).map((sId) => insertedCompMap.get(String(sId)) || sId);
+        await connection.query(
+          'UPDATE alamatak_assessment_components SET source_component_ids = ? WHERE id = ?',
+          [JSON.stringify(remapped), calc.insertId]
         );
       }
       await connection.commit();
@@ -1272,7 +1292,7 @@ app.post('/api/3alamatak/gradebooks/:id/assessments', verifyToken, requireActive
         [assessmentResult.insertId]
       );
       const [savedComponents] = await db.query(
-        'SELECT id, assessment_id, name, maximum_score, sort_order FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
+        'SELECT id, assessment_id, name, maximum_score, sort_order, component_type, calculation_type, source_component_ids, formula_definition FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
         [assessmentResult.insertId]
       );
       res.status(201).json({ ...savedAssessment[0], components: savedComponents });
@@ -1372,7 +1392,11 @@ app.get('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeache
   try {
     const assessment = await getOwnedAssessment(req, req.params.id);
     if (!assessment) return res.status(404).json({ message: 'Assessment not found.' });
-    const [marks] = await db.query(
+    const [components] = await db.query(
+      'SELECT id, assessment_id, name, maximum_score, sort_order, component_type, calculation_type, source_component_ids, formula_definition FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
+      [assessment.id]
+    );
+    const [storedMarks] = await db.query(
       `SELECT m.id, m.component_id, m.student_id, m.score, m.mark_status,
               m.comment, m.follow_up_required, m.provenance
        FROM alamatak_marks m
@@ -1380,7 +1404,38 @@ app.get('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeache
        WHERE c.assessment_id = ?`,
       [assessment.id]
     );
-    res.json(marks);
+
+    // Group marks by student and calculate calculated components
+    const studentIds = [...new Set(storedMarks.map((m) => Number(m.student_id)))];
+    const [students] = await db.query('SELECT id FROM alamatak_students WHERE gradebook_id = ?', [assessment.gradebook_id]);
+    students.forEach((s) => { if (!studentIds.includes(Number(s.id))) studentIds.push(Number(s.id)); });
+
+    const calculatedComps = components.filter((c) => c.component_type === 'calculated');
+    const allMarks = [...storedMarks];
+
+    if (calculatedComps.length > 0) {
+      for (const studentId of studentIds) {
+        const studentStoredMarks = storedMarks.filter((m) => Number(m.student_id) === studentId);
+        const computed = calculateComponentMarks(components, studentStoredMarks);
+        for (const calcComp of calculatedComps) {
+          const compData = computed[String(calcComp.id)] || computed[calcComp.id];
+          if (compData) {
+            allMarks.push({
+              id: null,
+              component_id: calcComp.id,
+              student_id: studentId,
+              score: compData.score,
+              mark_status: compData.mark_status,
+              comment: null,
+              follow_up_required: false,
+              is_calculated: true,
+            });
+          }
+        }
+      }
+    }
+
+    res.json(allMarks);
   } catch (error) {
     console.error('3alamatak marks list error:', error);
     res.status(500).json({ message: 'Internal server error.' });
@@ -1404,14 +1459,25 @@ app.put('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeache
       [assessment.gradebook_id, studentIds]
     );
     const studentSet = new Set(students.map((student) => Number(student.id)));
-    for (const entry of entries) {
+    const [fullComponents] = await db.query(
+      'SELECT id, component_type FROM alamatak_assessment_components WHERE assessment_id = ?',
+      [assessment.id]
+    );
+    const calculatedCompSet = new Set(fullComponents.filter((c) => c.component_type === 'calculated').map((c) => Number(c.id)));
+    const validEntries = [];
+    for (const entry of validEntries) {
       const studentId = Number(entry.student_id);
       const componentId = Number(entry.component_id);
+      if (calculatedCompSet.has(componentId)) {
+        // Skip calculated components without throwing error, or return if intended
+        continue;
+      }
       if (!studentSet.has(studentId) || !componentMap.has(componentId)) return res.status(400).json({ message: 'Mark entry references an invalid student or component.' });
       const score = entry.score === '' || entry.score === null || entry.score === undefined ? null : Number(entry.score);
       if (score !== null && (!Number.isFinite(score) || score < 0 || score > componentMap.get(componentId))) {
         return res.status(400).json({ message: 'A mark is outside its component maximum.' });
       }
+      validEntries.push(entry);
     }
     const connection = await db.getConnection();
     try {
@@ -1455,7 +1521,7 @@ async function loadFinalGradeView(req, gradebookId) {
   }
   const [students] = await db.query("SELECT id, display_name, external_student_id, status FROM alamatak_students WHERE gradebook_id = ? AND status <> 'archived' ORDER BY display_name", [gradebook.id]);
   const [assessments] = await db.query('SELECT id, title, assessment_date, is_historical, source_year FROM alamatak_assessments WHERE gradebook_id = ? AND is_historical = FALSE ORDER BY assessment_date IS NULL, assessment_date, id', [gradebook.id]);
-  const [components] = await db.query(`SELECT c.id, c.assessment_id, c.name, c.maximum_score, c.sort_order FROM alamatak_assessment_components c JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ? AND a.is_historical = FALSE ORDER BY c.assessment_id, c.sort_order, c.id`, [gradebook.id]);
+  const [components] = await db.query(`SELECT c.id, c.assessment_id, c.name, c.maximum_score, c.sort_order, c.component_type, c.calculation_type, c.source_component_ids, c.formula_definition FROM alamatak_assessment_components c JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ? AND a.is_historical = FALSE ORDER BY c.assessment_id, c.sort_order, c.id`, [gradebook.id]);
   const [marks] = await db.query(`SELECT m.component_id, m.student_id, m.score, m.mark_status, m.comment, m.updated_at FROM alamatak_marks m JOIN alamatak_assessment_components c ON c.id = m.component_id JOIN alamatak_assessments a ON a.id = c.assessment_id WHERE a.gradebook_id = ? AND a.is_historical = FALSE`, [gradebook.id]);
   let scheme = null;
   if (config?.scheme_id) {

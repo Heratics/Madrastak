@@ -1,3 +1,5 @@
+const { calculateComponentMarks } = require('./componentCalculation');
+
 function numeric(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -21,10 +23,11 @@ function validateThresholdScheme(scheme) {
   return { valid: errors.length === 0, errors };
 }
 
-function assessmentPercent(markRows, componentId, studentId, maximum) {
-  const mark = markRows.find((row) => Number(row.component_id) === Number(componentId) && Number(row.student_id) === Number(studentId));
-  const score = numeric(mark?.score);
-  const status = mark?.mark_status || null;
+function assessmentPercent(markRows, componentId, studentId, maximum, studentCalculatedMarks = {}) {
+  const computed = studentCalculatedMarks[String(componentId)] || studentCalculatedMarks[Number(componentId)];
+  const rawMark = markRows.find((row) => Number(row.component_id) === Number(componentId) && Number(row.student_id) === Number(studentId));
+  const score = computed?.score !== undefined ? computed.score : numeric(rawMark?.score);
+  const status = computed?.mark_status || rawMark?.mark_status || null;
   if (score === null) return { percent: null, score: null, status };
   if (!Number.isFinite(Number(maximum)) || Number(maximum) <= 0 || score < 0 || score > Number(maximum)) return { percent: null, score, status: status || 'invalid' };
   return { percent: score / Number(maximum) * 100, score, status };
@@ -63,9 +66,29 @@ function calculateFinalGrades({ students = [], assessments = [], components = []
   if (readiness.missing_mappings.length) readiness.warnings.push(`${readiness.missing_mappings.length} assessment component(s) are not mapped.`);
 
   const results = students.map((student) => {
+    // Collect all computed marks for this student across assessments
+    const studentCalculatedMarks = {};
+    for (const assessment of assessments) {
+      const assComps = components.filter((c) => Number(c.assessment_id) === Number(assessment.id));
+      const rawStudentMarks = marks.filter((m) => Number(m.student_id) === Number(student.id) && assComps.some((c) => Number(c.id) === Number(m.component_id)));
+      const computed = calculateComponentMarks(assComps, rawStudentMarks);
+      Object.entries(computed).forEach(([cId, data]) => {
+        studentCalculatedMarks[String(cId)] = data;
+        studentCalculatedMarks[Number(cId)] = data;
+      });
+    }
+
     const categoryResults = categories.map((category) => {
       const items = categoryItems.filter((item) => Number(item.category_id) === Number(category.id));
-      const values = items.map((item) => ({ item, component: componentMap.get(Number(item.component_id)) })).filter((value) => value.component).map(({ item, component }) => ({ ...assessmentPercent(marks, component.id, student.id, component.maximum_score), component, assessment: assessmentMap.get(Number(component.assessment_id)), weight: Number(item.weight || 1) }));
+      const values = items
+        .map((item) => ({ item, component: componentMap.get(Number(item.component_id)) }))
+        .filter((value) => value.component)
+        .map(({ item, component }) => ({
+          ...assessmentPercent(marks, component.id, student.id, component.maximum_score, studentCalculatedMarks),
+          component,
+          assessment: assessmentMap.get(Number(component.assessment_id)),
+          weight: Number(item.weight || 1),
+        }));
       const numericValues = values.filter((value) => value.percent !== null);
       const totalWeight = numericValues.reduce((sum, value) => sum + value.weight, 0);
       const percent = totalWeight > 0 ? numericValues.reduce((sum, value) => sum + value.percent * value.weight, 0) / totalWeight : null;
@@ -78,7 +101,18 @@ function calculateFinalGrades({ students = [], assessments = [], components = []
     const usableCategories = categoryResults.filter((category) => category.percent !== null);
     const overall = categoryWeight > 0 && usableCategories.length === categories.length ? usableCategories.reduce((sum, category) => sum + category.percent * category.weight, 0) / categoryWeight : null;
     const status = missing ? (absent ? 'Absent' : 'Incomplete') : (overall === null ? (absent ? 'Absent' : 'No Grade') : 'Ready');
-    const result = { student_id: student.id, display_name: student.display_name, categories: categoryResults, overall_percent: overall, final_grade: status === 'Ready' ? gradeForPercent(overall, scheme, scheme.components?.Overall ? 'Overall' : (scheme.components?.AX ? 'AX' : Object.keys(scheme.components || {})[0])) : null, status, required_assessments: required, completed_assessments: complete, missing_assessments: Math.max(0, missing), absent_assessments: absent };
+    const result = {
+      student_id: student.id,
+      display_name: student.display_name,
+      categories: categoryResults,
+      overall_percent: overall != null ? Math.round(overall * 100) / 100 : null,
+      final_grade: status === 'Ready' ? gradeForPercent(overall, scheme, scheme.components?.Overall ? 'Overall' : (scheme.components?.AX ? 'AX' : Object.keys(scheme.components || {})[0])) : null,
+      status,
+      required_assessments: required,
+      completed_assessments: complete,
+      missing_assessments: Math.max(0, missing),
+      absent_assessments: absent,
+    };
     readiness.students.push(result);
     return result;
   });

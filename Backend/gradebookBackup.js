@@ -55,7 +55,7 @@ async function buildGradebookBackupSnapshot(db, gradebookId) {
   let marks = [];
   if (assessmentIds.length) {
     const [componentsRaw] = (await db.query(
-      'SELECT id, assessment_id, name, maximum_score, sort_order FROM alamatak_assessment_components WHERE assessment_id IN (?) ORDER BY assessment_id, sort_order, id',
+      'SELECT id, assessment_id, name, maximum_score, sort_order, component_type, calculation_type, source_component_ids, formula_definition FROM alamatak_assessment_components WHERE assessment_id IN (?) ORDER BY assessment_id, sort_order, id',
       [assessmentIds]
     )) || [];
     components = componentsRaw || [];

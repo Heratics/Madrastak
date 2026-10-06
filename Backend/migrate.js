@@ -266,6 +266,10 @@ async function runMigrations() {
         name VARCHAR(255) NOT NULL,
         maximum_score DECIMAL(10,2) NOT NULL DEFAULT 0,
         sort_order INT NOT NULL DEFAULT 0,
+        component_type VARCHAR(32) NOT NULL DEFAULT 'input',
+        calculation_type VARCHAR(32) NULL,
+        source_component_ids JSON NULL,
+        formula_definition JSON NULL,
         FOREIGN KEY (assessment_id) REFERENCES alamatak_assessments(id) ON DELETE CASCADE,
         INDEX idx_alamatak_components_assessment (assessment_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,

@@ -39,6 +39,10 @@ import {
   Database,
   ShieldCheck,
   RotateCcw,
+  Copy,
+  TrendingUp,
+  TrendingDown,
+  Eye,
 } from 'lucide-react';
 import { AuthContext } from '../context/AuthContext';
 import { threeAlamatakApi } from '../features/threeAlamatak/services/threeAlamatakApi';
@@ -655,9 +659,9 @@ export default function ThreeAlamatakPage() {
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:flex-row">
+      <div className="mx-auto flex w-full max-w-[1700px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:flex-row">
         {/* Left Navigation Sidebar */}
-        <aside className="w-full shrink-0 rounded-2xl bg-slate-900 p-4 text-slate-300 shadow-xl lg:w-64 lg:self-start">
+        <aside className="w-full shrink-0 rounded-2xl bg-slate-900 p-4 text-slate-300 shadow-xl lg:w-72 lg:self-start lg:sticky lg:top-6">
           <div className="mb-2 px-3 py-2 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Workspace</div>
           <nav className="space-y-1">
             {WORKSPACE_VIEWS.map(([key, label, Icon]) => (
@@ -665,13 +669,13 @@ export default function ThreeAlamatakPage() {
                 key={key}
                 type="button"
                 onClick={() => setView(key)}
-                className={`flex min-h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-bold transition ${
+                className={`flex min-h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-bold transition duration-150 cursor-pointer ${
                   view === key
-                    ? 'bg-teal-700 text-white shadow-sm'
+                    ? 'bg-teal-700 text-white shadow-sm ring-1 ring-teal-500/50'
                     : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                 }`}
               >
-                <Icon className="h-4 w-4 text-teal-400" />
+                <Icon className="h-4 w-4 text-teal-400 shrink-0" />
                 {label}
               </button>
             ))}
@@ -686,35 +690,39 @@ export default function ThreeAlamatakPage() {
                 key={key}
                 type="button"
                 onClick={() => setView(key)}
-                className={`flex min-h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-bold transition ${
+                className={`flex min-h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-bold transition duration-150 cursor-pointer ${
                   view === key
-                    ? 'bg-teal-700 text-white shadow-sm'
+                    ? 'bg-teal-700 text-white shadow-sm ring-1 ring-teal-500/50'
                     : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                 }`}
               >
-                <Icon className="h-4 w-4 text-teal-400" />
+                <Icon className="h-4 w-4 text-teal-400 shrink-0" />
                 {label}
               </button>
             ))}
           </nav>
 
           {/* Current Gradebook Card in Sidebar */}
-          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-800/80 p-3.5">
+          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-800/80 p-4">
             <p className="text-[10px] font-black uppercase tracking-widest text-teal-400">Current Gradebook</p>
-            {gradebook ? (
-              <div className="mt-2">
-                <p className="font-extrabold text-white text-sm truncate">{gradebook.title}</p>
-                <p className="text-xs text-slate-400 mt-0.5 truncate">
-                  {gradebook.subject || 'General'} · {gradebook.academic_year}
-                </p>
-              </div>
-            ) : (
-              <p className="mt-1 text-xs text-slate-400 italic">None selected</p>
-            )}
+            {(() => {
+              const currentMeta = gradebook || gradebooks.find((g) => g.id === selectedId) || null;
+              if (currentMeta) {
+                return (
+                  <div className="mt-2">
+                    <p className="font-extrabold text-white text-sm truncate">{currentMeta.title}</p>
+                    <p className="text-xs text-slate-400 mt-0.5 truncate">
+                      {currentMeta.subject || 'General'} · {currentMeta.academic_year}
+                    </p>
+                  </div>
+                );
+              }
+              return <p className="mt-1 text-xs text-slate-400 italic">None selected</p>;
+            })()}
             <select
               value={selectedId || ''}
               onChange={(event) => setSelectedId(Number(event.target.value) || null)}
-              className="mt-3 min-h-9 w-full rounded-xl border border-slate-700 bg-slate-900 px-2.5 text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+              className="mt-3 min-h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer hover:border-slate-600 transition"
             >
               <option value="">Select a gradebook</option>
               {gradebooks.map((item) => (
@@ -731,11 +739,16 @@ export default function ThreeAlamatakPage() {
           <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.16em] text-teal-700">3alamatak Workspace</p>
-              <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-900">{viewTitle(view, gradebook)}</h2>
+              <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-900">
+                {viewTitle(view, gradebook || gradebooks.find((g) => g.id === selectedId))}
+              </h2>
               <p className="mt-1 text-sm font-medium text-slate-500">
-                {gradebook
-                  ? `Active Gradebook: ${gradebook.title} · ${gradebook.subject || 'General'} · ${gradebook.academic_year}`
-                  : 'Select or create a gradebook from the sidebar to begin.'}
+                {(() => {
+                  const currentMeta = gradebook || gradebooks.find((g) => g.id === selectedId) || null;
+                  return currentMeta
+                    ? `Active Gradebook: ${currentMeta.title} · ${currentMeta.subject || 'General'} · ${currentMeta.academic_year}`
+                    : 'Select or create a gradebook from the sidebar to begin.';
+                })()}
               </p>
             </div>
             {gradebook && (
@@ -2124,6 +2137,40 @@ function FinalGradesTab({ gradebookId, assessments, schemes }) {
 // -------------------------------------------------------------
 // CUSTOM REPORT BUILDER VIEW
 // -------------------------------------------------------------
+function scoreToGrade(pct) {
+  if (pct === null || pct === undefined || !Number.isFinite(Number(pct))) return '—';
+  const val = Number(pct);
+  if (val >= 90) return 'A*';
+  if (val >= 80) return 'A';
+  if (val >= 70) return 'B';
+  if (val >= 60) return 'C';
+  if (val >= 50) return 'D';
+  if (val >= 40) return 'E';
+  if (val >= 30) return 'F';
+  if (val >= 20) return 'G';
+  return 'U';
+}
+
+function gradeColorClass(grade) {
+  switch (grade) {
+    case 'A*':
+    case 'A':
+      return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+    case 'B':
+    case 'C':
+      return 'bg-teal-100 text-teal-800 border-teal-300';
+    case 'D':
+    case 'E':
+      return 'bg-amber-100 text-amber-800 border-amber-300';
+    case 'F':
+    case 'G':
+    case 'U':
+      return 'bg-rose-100 text-rose-800 border-rose-300';
+    default:
+      return 'bg-slate-100 text-slate-700 border-slate-200';
+  }
+}
+
 function ReportsView({
   gradebookId,
   gradebook,
@@ -2137,8 +2184,8 @@ function ReportsView({
   onExportHtml,
   onOpenPrint,
 }) {
-  const [reportType, setReportType] = useState('class'); // student, class, assessment, final_grade, custom
-  const [studentFilter, setStudentFilter] = useState('all'); // all, selected, attention, missing, absent
+  const [reportType, setReportType] = useState('class'); // class, student, assessment, progress, final_grade, custom
+  const [studentFilter, setStudentFilter] = useState('all'); // all, attention, selected
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
   const [assessmentFilter, setAssessmentFilter] = useState('all'); // all, selected
   const [selectedAssessmentIds, setSelectedAssessmentIds] = useState(new Set());
@@ -2147,6 +2194,8 @@ function ReportsView({
   const [includePercentages, setIncludePercentages] = useState(true);
   const [includeGrades, setIncludeGrades] = useState(true);
   const [includeComments, setIncludeComments] = useState(false);
+  const [copiedNotification, setCopiedNotification] = useState(false);
+  const [selectedStudentCardId, setSelectedStudentCardId] = useState('all');
 
   // Filter students based on selection
   const filteredStudents = useMemo(() => {
@@ -2188,88 +2237,230 @@ function ReportsView({
     });
   };
 
+  // Compile full report dataset with calculated components
+  const compiledReport = useMemo(() => {
+    // 1. Determine active components per assessment
+    const assessmentList = filteredAssessments.map((ass) => {
+      const rawComps = ass.components || [];
+      let comps = rawComps;
+      if (componentFilter === 'totals_only') {
+        comps = rawComps.filter((c) => c.component_type === 'calculated');
+        if (!comps.length) comps = rawComps; // Fallback to all if no totals defined
+      } else if (componentFilter === 'input_only') {
+        comps = rawComps.filter((c) => c.component_type !== 'calculated');
+      }
+      return {
+        ...ass,
+        activeComponents: comps,
+      };
+    });
+
+    // 2. Build rows per student
+    const studentRows = filteredStudents.map((student) => {
+      const assessmentMarks = {};
+      let totalEarned = 0;
+      let totalMax = 0;
+      let numericCount = 0;
+      let absentCount = 0;
+
+      for (const ass of filteredAssessments) {
+        const studentRawMarks = {};
+        (ass.components || []).forEach((c) => {
+          studentRawMarks[c.id] = marks[`${student.id}:${c.id}`] || {};
+        });
+        const calculated = calculateComponentMarks(ass.components || [], studentRawMarks);
+        assessmentMarks[ass.id] = calculated;
+
+        // Sum components in scope
+        const activeComps = assessmentList.find((a) => a.id === ass.id)?.activeComponents || [];
+        activeComps.forEach((comp) => {
+          const m = calculated[comp.id] || calculated[String(comp.id)] || {};
+          if (m.score !== null && m.score !== undefined && Number.isFinite(Number(m.score))) {
+            totalEarned += Number(m.score);
+            totalMax += Number(comp.maximum_score || 0);
+            numericCount++;
+          } else if (/absent/i.test(m.mark_status || '')) {
+            absentCount++;
+          }
+        });
+      }
+
+      const overallPercent = totalMax > 0 ? (totalEarned / totalMax) * 100 : null;
+      const overallGrade = scoreToGrade(overallPercent);
+
+      return {
+        student,
+        assessmentMarks,
+        totalEarned: Math.round(totalEarned * 100) / 100,
+        totalMax: Math.round(totalMax * 100) / 100,
+        overallPercent: overallPercent !== null ? Math.round(overallPercent * 10) / 10 : null,
+        overallGrade,
+        numericCount,
+        absentCount,
+      };
+    });
+
+    // 3. Compute class-level statistics
+    const validPercents = studentRows
+      .map((r) => r.overallPercent)
+      .filter((p) => p !== null && Number.isFinite(p));
+    const average = validPercents.length
+      ? Math.round((validPercents.reduce((sum, v) => sum + v, 0) / validPercents.length) * 10) / 10
+      : null;
+    const highest = validPercents.length ? Math.max(...validPercents) : null;
+    const lowest = validPercents.length ? Math.min(...validPercents) : null;
+
+    // Median
+    let median = null;
+    if (validPercents.length) {
+      const sorted = [...validPercents].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      median = sorted.length % 2 !== 0 ? sorted[mid] : Math.round(((sorted[mid - 1] + sorted[mid]) / 2) * 10) / 10;
+    }
+
+    // Grade Distribution
+    const distribution = { 'A*': 0, A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, U: 0 };
+    studentRows.forEach((r) => {
+      if (r.overallGrade && distribution[r.overallGrade] !== undefined) {
+        distribution[r.overallGrade]++;
+      }
+    });
+
+    return {
+      assessments: assessmentList,
+      studentRows,
+      stats: {
+        totalStudents: filteredStudents.length,
+        totalAssessments: filteredAssessments.length,
+        average,
+        highest,
+        lowest,
+        median,
+        completion: filteredStudents.length ? Math.round((validPercents.length / filteredStudents.length) * 100) : 0,
+        distribution,
+      },
+    };
+  }, [filteredStudents, filteredAssessments, componentFilter, marks]);
+
+  // Copy table to clipboard
+  const handleCopyTable = () => {
+    let tsv = `Student\tExternal ID\tTotal Score\tOverall %\tGrade\n`;
+    compiledReport.studentRows.forEach((row) => {
+      tsv += `${row.student.display_name}\t${row.student.external_student_id || ''}\t${row.totalEarned}/${row.totalMax}\t${row.overallPercent != null ? row.overallPercent + '%' : '—'}\t${row.overallGrade}\n`;
+    });
+    navigator.clipboard.writeText(tsv).then(() => {
+      setCopiedNotification(true);
+      setTimeout(() => setCopiedNotification(false), 3000);
+    });
+  };
+
+  // Trigger report print
+  const handlePrint = () => {
+    window.print();
+  };
+
   return (
-    <div className="space-y-6">
-      {/* Quick Export Cards */}
+    <div className="space-y-8">
+      {/* Top Quick Actions */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <button
           type="button"
-          onClick={onOpenPrint}
-          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:bg-slate-50 transition text-left"
+          onClick={handlePrint}
+          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs hover:border-teal-400 hover:shadow-md hover:bg-teal-50/20 transition-all duration-150 cursor-pointer text-left group"
         >
-          <Printer className="h-7 w-7 text-teal-700 shrink-0" />
+          <div className="rounded-xl bg-teal-100 p-2 text-teal-700 group-hover:bg-teal-700 group-hover:text-white transition">
+            <Printer className="h-5 w-5" />
+          </div>
           <div>
-            <p className="font-bold text-sm text-slate-900">Print Report</p>
-            <p className="text-xs text-slate-500">Formatted print-ready</p>
+            <p className="font-extrabold text-sm text-slate-900 group-hover:text-teal-950">Print Report</p>
+            <p className="text-xs text-slate-500">Full formatted view</p>
           </div>
         </button>
         <button
           type="button"
           onClick={onExportCsv}
-          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:bg-slate-50 transition text-left"
+          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs hover:border-emerald-400 hover:shadow-md hover:bg-emerald-50/20 transition-all duration-150 cursor-pointer text-left group"
         >
-          <FileSpreadsheet className="h-7 w-7 text-emerald-700 shrink-0" />
+          <div className="rounded-xl bg-emerald-100 p-2 text-emerald-700 group-hover:bg-emerald-700 group-hover:text-white transition">
+            <FileSpreadsheet className="h-5 w-5" />
+          </div>
           <div>
-            <p className="font-bold text-sm text-slate-900">Marks CSV</p>
+            <p className="font-extrabold text-sm text-slate-900 group-hover:text-emerald-950">Marks CSV</p>
             <p className="text-xs text-slate-500">Spreadsheet table</p>
           </div>
         </button>
         <button
           type="button"
           onClick={onExportHtml}
-          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:bg-slate-50 transition text-left"
+          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs hover:border-indigo-400 hover:shadow-md hover:bg-indigo-50/20 transition-all duration-150 cursor-pointer text-left group"
         >
-          <FileText className="h-7 w-7 text-indigo-700 shrink-0" />
+          <div className="rounded-xl bg-indigo-100 p-2 text-indigo-700 group-hover:bg-indigo-700 group-hover:text-white transition">
+            <FileText className="h-5 w-5" />
+          </div>
           <div>
-            <p className="font-bold text-sm text-slate-900">HTML Copy</p>
+            <p className="font-extrabold text-sm text-slate-900 group-hover:text-indigo-950">HTML Copy</p>
             <p className="text-xs text-slate-500">Standalone report</p>
           </div>
         </button>
         <button
           type="button"
           onClick={onExportJson}
-          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:bg-slate-50 transition text-left"
+          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs hover:border-purple-400 hover:shadow-md hover:bg-purple-50/20 transition-all duration-150 cursor-pointer text-left group"
         >
-          <FileCode className="h-7 w-7 text-purple-700 shrink-0" />
+          <div className="rounded-xl bg-purple-100 p-2 text-purple-700 group-hover:bg-purple-700 group-hover:text-white transition">
+            <FileCode className="h-5 w-5" />
+          </div>
           <div>
-            <p className="font-bold text-sm text-slate-900">JSON Snapshot</p>
+            <p className="font-extrabold text-sm text-slate-900 group-hover:text-purple-950">JSON Snapshot</p>
             <p className="text-xs text-slate-500">Format v1 structure</p>
           </div>
         </button>
       </div>
 
-      {/* Custom Report Builder Card */}
+      {/* SECTION 1: REPORT BUILDER CONTROLS */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
-        <div>
-          <h3 className="text-lg font-black text-slate-900">Custom Report Builder</h3>
-          <p className="text-xs text-slate-500">Tailor report generation by student, assessment, and content preferences.</p>
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          <div>
+            <span className="text-[11px] font-black uppercase tracking-widest text-teal-700">Configure</span>
+            <h3 className="text-xl font-black text-slate-900">Custom Report Builder</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Select your audience, assessment scope, and display options to generate a custom report.
+            </p>
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-xl bg-teal-50 px-3.5 py-1.5 border border-teal-200/80">
+            <Sparkles className="h-4 w-4 text-teal-700" />
+            <span className="text-xs font-black text-teal-900">
+              {filteredStudents.length} students · {filteredAssessments.length} assessments active
+            </span>
+          </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          {/* Column 1: Report Type & Students */}
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {/* Column 1: Report Type & Audience */}
           <div className="space-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
-            <span className="text-xs font-black uppercase tracking-wider text-slate-600">1. Select Target & Audience</span>
+            <span className="text-xs font-black uppercase tracking-wider text-slate-600">1. Report Type & Audience</span>
             <div>
-              <label className="text-xs font-bold text-slate-500">Report Type:</label>
+              <label className="text-xs font-bold text-slate-600">Report Template:</label>
               <select
                 value={reportType}
                 onChange={(e) => setReportType(e.target.value)}
-                className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-bold"
+                className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 shadow-2xs focus:ring-2 focus:ring-teal-500 hover:border-slate-300 transition cursor-pointer"
               >
                 <option value="class">Class Performance Summary</option>
-                <option value="student">Individual Student Cards</option>
-                <option value="assessment">Assessment Item Analysis</option>
+                <option value="student">Individual Student Report Cards</option>
+                <option value="assessment">Assessment & Component Analysis</option>
+                <option value="progress">Student Progress Progression</option>
                 <option value="final_grade">Final Grade Master Sheet</option>
-                <option value="custom">Custom Filtered Report</option>
+                <option value="custom">Custom Multi-Column Breakdown</option>
               </select>
             </div>
 
             <div>
-              <label className="text-xs font-bold text-slate-500">Student Filter:</label>
+              <label className="text-xs font-bold text-slate-600">Student Filter:</label>
               <select
                 value={studentFilter}
                 onChange={(e) => setStudentFilter(e.target.value)}
-                className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-bold"
+                className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 shadow-2xs focus:ring-2 focus:ring-teal-500 hover:border-slate-300 transition cursor-pointer"
               >
                 <option value="all">All Enrolled Students ({students.length})</option>
                 <option value="attention">Needs Attention Only ({analytics?.needs_attention?.length || 0})</option>
@@ -2278,31 +2469,31 @@ function ReportsView({
             </div>
 
             {studentFilter === 'selected' && (
-              <div className="max-h-40 overflow-y-auto space-y-1 rounded-lg border border-slate-200 bg-white p-2 text-xs">
+              <div className="max-h-44 overflow-y-auto space-y-1 rounded-xl border border-slate-200 bg-white p-2.5 text-xs shadow-2xs">
                 {students.map((st) => (
-                  <label key={st.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
+                  <label key={st.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1.5 rounded-lg transition">
                     <input
                       type="checkbox"
                       checked={selectedStudentIds.has(st.id)}
                       onChange={() => toggleStudent(st.id)}
-                      className="rounded text-teal-600"
+                      className="rounded text-teal-600 focus:ring-teal-500"
                     />
-                    <span className="truncate">{st.display_name}</span>
+                    <span className="truncate font-semibold text-slate-800">{st.display_name}</span>
                   </label>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Column 2: Assessment Filters */}
+          {/* Column 2: Assessment Scope */}
           <div className="space-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
             <span className="text-xs font-black uppercase tracking-wider text-slate-600">2. Assessment Scope</span>
             <div>
-              <label className="text-xs font-bold text-slate-500">Assessment Selection:</label>
+              <label className="text-xs font-bold text-slate-600">Assessment Selection:</label>
               <select
                 value={assessmentFilter}
                 onChange={(e) => setAssessmentFilter(e.target.value)}
-                className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-bold"
+                className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 shadow-2xs focus:ring-2 focus:ring-teal-500 hover:border-slate-300 transition cursor-pointer"
               >
                 <option value="all">All Assessments ({assessments.length})</option>
                 <option value="selected">Pick Specific Assessments…</option>
@@ -2310,85 +2501,603 @@ function ReportsView({
             </div>
 
             {assessmentFilter === 'selected' && (
-              <div className="max-h-40 overflow-y-auto space-y-1 rounded-lg border border-slate-200 bg-white p-2 text-xs">
+              <div className="max-h-44 overflow-y-auto space-y-1 rounded-xl border border-slate-200 bg-white p-2.5 text-xs shadow-2xs">
                 {assessments.map((a) => (
-                  <label key={a.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
+                  <label key={a.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1.5 rounded-lg transition">
                     <input
                       type="checkbox"
                       checked={selectedAssessmentIds.has(a.id)}
                       onChange={() => toggleAssessment(a.id)}
-                      className="rounded text-teal-600"
+                      className="rounded text-teal-600 focus:ring-teal-500"
                     />
-                    <span className="truncate">{a.title}</span>
+                    <span className="truncate font-semibold text-slate-800">{a.title}</span>
                   </label>
                 ))}
               </div>
             )}
 
             <div>
-              <label className="text-xs font-bold text-slate-500">Component Detail:</label>
+              <label className="text-xs font-bold text-slate-600">Component Granularity:</label>
               <select
                 value={componentFilter}
                 onChange={(e) => setComponentFilter(e.target.value)}
-                className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-bold"
+                className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 shadow-2xs focus:ring-2 focus:ring-teal-500 hover:border-slate-300 transition cursor-pointer"
               >
-                <option value="all">All Components (Input & Totals)</option>
+                <option value="all">All Components (Input & Calculated Totals)</option>
                 <option value="totals_only">Calculated Assessment Totals Only</option>
                 <option value="input_only">Input Questions Only</option>
               </select>
             </div>
           </div>
 
-          {/* Column 3: Content Options */}
+          {/* Column 3: Columns & Details */}
           <div className="space-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
-            <span className="text-xs font-black uppercase tracking-wider text-slate-600">3. Columns & Details</span>
-            <div className="space-y-2 text-xs font-bold text-slate-700">
-              <label className="flex items-center gap-2 cursor-pointer">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-600">3. Columns & Display</span>
+            <div className="space-y-2.5 text-xs font-bold text-slate-700">
+              <label className="flex items-center gap-2.5 cursor-pointer hover:text-slate-900 transition">
                 <input
                   type="checkbox"
                   checked={includeScores}
                   onChange={(e) => setIncludeScores(e.target.checked)}
-                  className="rounded text-teal-600"
+                  className="rounded text-teal-600 focus:ring-teal-500"
                 />
-                <span>Raw Scores / Maximum</span>
+                <span>Raw Scores / Maximums</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-2.5 cursor-pointer hover:text-slate-900 transition">
                 <input
                   type="checkbox"
                   checked={includePercentages}
                   onChange={(e) => setIncludePercentages(e.target.checked)}
-                  className="rounded text-teal-600"
+                  className="rounded text-teal-600 focus:ring-teal-500"
                 />
                 <span>Percentages (%)</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-2.5 cursor-pointer hover:text-slate-900 transition">
                 <input
                   type="checkbox"
                   checked={includeGrades}
                   onChange={(e) => setIncludeGrades(e.target.checked)}
-                  className="rounded text-teal-600"
+                  className="rounded text-teal-600 focus:ring-teal-500"
                 />
                 <span>Letter Grades (A* - U)</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-2.5 cursor-pointer hover:text-slate-900 transition">
                 <input
                   type="checkbox"
                   checked={includeComments}
                   onChange={(e) => setIncludeComments(e.target.checked)}
-                  className="rounded text-teal-600"
+                  className="rounded text-teal-600 focus:ring-teal-500"
                 />
-                <span>Teacher Comments & Flags</span>
+                <span>Teacher Flags & Attendance Notes</span>
               </label>
-            </div>
-
-            <div className="mt-4 border-t border-slate-200 pt-3">
-              <p className="text-[11px] font-black uppercase text-teal-700">Live Preview Counts:</p>
-              <p className="mt-1 text-xs text-slate-600 font-semibold">
-                {filteredStudents.length} students · {filteredAssessments.length} assessments
-              </p>
             </div>
           </div>
         </div>
+      </div>
+
+      {/* SECTION 2: GENERATED REPORT PREVIEW */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+        {/* Report Header Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="inline-block rounded-md bg-teal-700 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-white">
+                Live Report
+              </span>
+              <span className="text-xs font-bold text-slate-500">
+                {gradebook?.title || 'Gradebook'} · {gradebook?.subject || 'General'} · {gradebook?.academic_year || ''}
+              </span>
+            </div>
+            <h3 className="mt-1 text-2xl font-black text-slate-900">
+              {reportType === 'class' && 'Class Performance Report'}
+              {reportType === 'student' && 'Individual Student Report Cards'}
+              {reportType === 'assessment' && 'Assessment Item & Component Analysis'}
+              {reportType === 'progress' && 'Student Progression Timeline'}
+              {reportType === 'final_grade' && 'Final Grade Master Sheet'}
+              {reportType === 'custom' && 'Custom Filtered Assessment Report'}
+            </h3>
+          </div>
+
+          {/* Action Toolbar on Generated Report */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleCopyTable}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 transition cursor-pointer"
+            >
+              <Copy className="h-3.5 w-3.5 text-slate-500" />
+              {copiedNotification ? 'Copied!' : 'Copy Table'}
+            </button>
+            <button
+              type="button"
+              onClick={onExportCsv}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 transition cursor-pointer"
+            >
+              <Download className="h-3.5 w-3.5 text-emerald-600" /> Export CSV
+            </button>
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-teal-700 px-4 text-xs font-bold text-white shadow-sm hover:bg-teal-600 transition cursor-pointer"
+            >
+              <Printer className="h-3.5 w-3.5" /> Print Report
+            </button>
+          </div>
+        </div>
+
+        {/* Executive Metrics Bar */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+            <p className="text-[11px] font-black uppercase text-slate-500">Class Average</p>
+            <p className="mt-1 text-2xl font-black text-slate-900">
+              {compiledReport.stats.average !== null ? `${compiledReport.stats.average}%` : '—'}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Grade: {scoreToGrade(compiledReport.stats.average)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+            <p className="text-[11px] font-black uppercase text-slate-500">Highest Score</p>
+            <p className="mt-1 text-2xl font-black text-emerald-700">
+              {compiledReport.stats.highest !== null ? `${compiledReport.stats.highest}%` : '—'}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Top performing student</p>
+          </div>
+          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+            <p className="text-[11px] font-black uppercase text-slate-500">Lowest Score</p>
+            <p className="mt-1 text-2xl font-black text-amber-700">
+              {compiledReport.stats.lowest !== null ? `${compiledReport.stats.lowest}%` : '—'}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Spread range: {compiledReport.stats.highest !== null && compiledReport.stats.lowest !== null ? `${Math.round((compiledReport.stats.highest - compiledReport.stats.lowest) * 10) / 10}%` : '—'}</p>
+          </div>
+          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+            <p className="text-[11px] font-black uppercase text-slate-500">Completion Rate</p>
+            <p className="mt-1 text-2xl font-black text-teal-700">
+              {compiledReport.stats.completion}%
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {compiledReport.studentRows.filter((r) => r.overallPercent !== null).length} / {compiledReport.studentRows.length} assessed
+            </p>
+          </div>
+        </div>
+
+        {/* REPORT TYPE 1: CLASS PERFORMANCE SUMMARY / TABLE */}
+        {(reportType === 'class' || reportType === 'custom') && (
+          <div className="space-y-6">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-black uppercase tracking-wider text-slate-600">
+                  <tr>
+                    <th className="px-4 py-3.5">Student</th>
+                    {compiledReport.assessments.map((ass) => (
+                      <th key={ass.id} className="px-4 py-3.5 text-center">
+                        <div>{ass.title}</div>
+                        <div className="text-[10px] font-bold text-slate-400">
+                          {ass.strand || 'General'}
+                        </div>
+                      </th>
+                    ))}
+                    {includeScores && <th className="px-4 py-3.5 text-center">Total Score</th>}
+                    {includePercentages && <th className="px-4 py-3.5 text-center">Overall %</th>}
+                    {includeGrades && <th className="px-4 py-3.5 text-center">Grade</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {compiledReport.studentRows.map((row, idx) => (
+                    <tr key={row.student.id} className="hover:bg-slate-50/80 transition">
+                      <td className="px-4 py-3 font-bold text-slate-900 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono text-slate-400">#{idx + 1}</span>
+                          <span>{row.student.display_name}</span>
+                          {row.student.external_student_id && (
+                            <span className="text-[10px] font-normal text-slate-400">
+                              ({row.student.external_student_id})
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      {compiledReport.assessments.map((ass) => {
+                        const marksObj = row.assessmentMarks[ass.id] || {};
+                        const comps = ass.activeComponents || [];
+                        const sumScore = comps.reduce((sum, c) => {
+                          const m = marksObj[c.id] || marksObj[String(c.id)] || {};
+                          return sum + (Number.isFinite(Number(m.score)) ? Number(m.score) : 0);
+                        }, 0);
+                        const maxScore = comps.reduce((sum, c) => sum + Number(c.maximum_score || 0), 0);
+                        const pct = maxScore > 0 ? (sumScore / maxScore) * 100 : null;
+
+                        return (
+                          <td key={ass.id} className="px-4 py-3 text-center whitespace-nowrap">
+                            <div className="inline-flex flex-col items-center">
+                              {includeScores && (
+                                <span className="font-bold text-slate-800">
+                                  {maxScore > 0 ? `${sumScore}/${maxScore}` : '—'}
+                                </span>
+                              )}
+                              {includePercentages && pct !== null && (
+                                <span className="text-[11px] font-medium text-slate-500">
+                                  {Math.round(pct * 10) / 10}%
+                                </span>
+                              )}
+                              {includeGrades && pct !== null && (
+                                <span className={`mt-0.5 inline-block px-1.5 py-0.2 rounded text-[10px] font-black border ${gradeColorClass(scoreToGrade(pct))}`}>
+                                  {scoreToGrade(pct)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                      {includeScores && (
+                        <td className="px-4 py-3 text-center font-extrabold text-slate-900 whitespace-nowrap">
+                          {row.totalMax > 0 ? `${row.totalEarned}/${row.totalMax}` : '—'}
+                        </td>
+                      )}
+                      {includePercentages && (
+                        <td className="px-4 py-3 text-center font-extrabold text-teal-800 whitespace-nowrap">
+                          {row.overallPercent !== null ? `${row.overallPercent}%` : '—'}
+                        </td>
+                      )}
+                      {includeGrades && (
+                        <td className="px-4 py-3 text-center whitespace-nowrap">
+                          <span className={`inline-block px-2.5 py-0.5 rounded-lg text-xs font-black border ${gradeColorClass(row.overallGrade)}`}>
+                            {row.overallGrade}
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                  {!compiledReport.studentRows.length && (
+                    <tr>
+                      <td colSpan={2 + compiledReport.assessments.length + (includeScores ? 1 : 0) + (includePercentages ? 1 : 0) + (includeGrades ? 1 : 0)} className="p-8 text-center text-xs text-slate-400 italic">
+                        No students match the current filter.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Grade Distribution Breakdown Bar */}
+            <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-600">Grade Distribution Breakdown</span>
+              <div className="mt-3 grid grid-cols-4 sm:grid-cols-8 gap-2">
+                {Object.entries(compiledReport.stats.distribution).map(([grade, count]) => {
+                  const pct = compiledReport.studentRows.length
+                    ? Math.round((count / compiledReport.studentRows.length) * 100)
+                    : 0;
+                  return (
+                    <div key={grade} className="rounded-xl border border-slate-200 bg-white p-2.5 text-center shadow-2xs">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-black border ${gradeColorClass(grade)}`}>
+                        {grade}
+                      </span>
+                      <p className="mt-1 text-base font-black text-slate-900">{count}</p>
+                      <p className="text-[10px] text-slate-400 font-bold">{pct}%</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* REPORT TYPE 2: INDIVIDUAL STUDENT REPORT CARDS */}
+        {reportType === 'student' && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-3">
+              <label className="text-xs font-bold text-slate-600">Select Student View:</label>
+              <select
+                value={selectedStudentCardId}
+                onChange={(e) => setSelectedStudentCardId(e.target.value)}
+                className="min-h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500"
+              >
+                <option value="all">Show All Student Cards ({compiledReport.studentRows.length})</option>
+                {compiledReport.studentRows.map((r) => (
+                  <option key={r.student.id} value={r.student.id}>
+                    {r.student.display_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-6 md:grid-cols-2">
+              {compiledReport.studentRows
+                .filter((r) => selectedStudentCardId === 'all' || String(r.student.id) === String(selectedStudentCardId))
+                .map((row) => (
+                  <div key={row.student.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
+                    <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                      <div>
+                        <h4 className="text-base font-black text-slate-900">{row.student.display_name}</h4>
+                        <p className="text-xs text-slate-500">
+                          ID: {row.student.external_student_id || 'N/A'} · Status: {row.student.status}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className={`inline-block px-3 py-1 rounded-xl text-sm font-black border ${gradeColorClass(row.overallGrade)}`}>
+                          Grade {row.overallGrade}
+                        </span>
+                        <p className="mt-0.5 text-xs font-black text-teal-800">
+                          {row.overallPercent !== null ? `${row.overallPercent}%` : '—'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-xs text-left">
+                        <thead className="bg-slate-50 text-slate-600 font-bold uppercase">
+                          <tr>
+                            <th className="px-2.5 py-1.5">Assessment</th>
+                            <th className="px-2.5 py-1.5 text-center">Score</th>
+                            <th className="px-2.5 py-1.5 text-center">%</th>
+                            <th className="px-2.5 py-1.5 text-center">Grade</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {compiledReport.assessments.map((ass) => {
+                            const marksObj = row.assessmentMarks[ass.id] || {};
+                            const comps = ass.activeComponents || [];
+                            const sumScore = comps.reduce((sum, c) => {
+                              const m = marksObj[c.id] || marksObj[String(c.id)] || {};
+                              return sum + (Number.isFinite(Number(m.score)) ? Number(m.score) : 0);
+                            }, 0);
+                            const maxScore = comps.reduce((sum, c) => sum + Number(c.maximum_score || 0), 0);
+                            const pct = maxScore > 0 ? (sumScore / maxScore) * 100 : null;
+
+                            return (
+                              <tr key={ass.id}>
+                                <td className="px-2.5 py-1.5 font-semibold text-slate-800">
+                                  {ass.title}
+                                  <span className="block text-[10px] text-slate-400 font-normal">
+                                    {ass.strand || 'General'}
+                                  </span>
+                                </td>
+                                <td className="px-2.5 py-1.5 text-center font-bold">
+                                  {maxScore > 0 ? `${sumScore}/${maxScore}` : '—'}
+                                </td>
+                                <td className="px-2.5 py-1.5 text-center font-medium">
+                                  {pct !== null ? `${Math.round(pct * 10) / 10}%` : '—'}
+                                </td>
+                                <td className="px-2.5 py-1.5 text-center">
+                                  {pct !== null && (
+                                    <span className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-black border ${gradeColorClass(scoreToGrade(pct))}`}>
+                                      {scoreToGrade(pct)}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-500">Teacher Remarks / Notes</p>
+                      <p className="mt-1 text-xs text-slate-600 italic">
+                        {row.overallPercent !== null && row.overallPercent >= 80
+                          ? 'Excellent performance demonstrating strong mastery of subject material.'
+                          : row.overallPercent !== null && row.overallPercent >= 50
+                          ? 'Consistent progress with steady grasp of core assessment topics.'
+                          : 'Requires targeted reinforcement and revision on foundational areas.'}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* REPORT TYPE 3: ASSESSMENT & COMPONENT ITEM ANALYSIS */}
+        {reportType === 'assessment' && (
+          <div className="space-y-6">
+            {compiledReport.assessments.map((ass) => {
+              const comps = ass.activeComponents || [];
+              return (
+                <div key={ass.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div>
+                      <h4 className="text-base font-black text-slate-900">{ass.title}</h4>
+                      <p className="text-xs text-slate-500">
+                        Strand: {ass.strand || 'General'} · Date: {ass.assessment_date || 'Undated'}
+                      </p>
+                    </div>
+                    <span className="text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 px-3 py-1 rounded-xl">
+                      {comps.length} components
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-100 text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-600 font-bold uppercase">
+                        <tr>
+                          <th className="px-3 py-2">Component Name</th>
+                          <th className="px-3 py-2 text-center">Type</th>
+                          <th className="px-3 py-2 text-center">Max Score</th>
+                          <th className="px-3 py-2 text-center">Class Average</th>
+                          <th className="px-3 py-2 text-center">Average %</th>
+                          <th className="px-3 py-2 text-center">Top Score</th>
+                          <th className="px-3 py-2 text-center">Lowest Score</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {comps.map((comp) => {
+                          const allScores = compiledReport.studentRows
+                            .map((r) => {
+                              const m = r.assessmentMarks[ass.id]?.[comp.id] || r.assessmentMarks[ass.id]?.[String(comp.id)];
+                              return m?.score;
+                            })
+                            .filter((s) => s !== null && s !== undefined && Number.isFinite(Number(s)))
+                            .map(Number);
+
+                          const avg = allScores.length ? allScores.reduce((sum, v) => sum + v, 0) / allScores.length : null;
+                          const avgPct = avg !== null && comp.maximum_score > 0 ? (avg / comp.maximum_score) * 100 : null;
+                          const top = allScores.length ? Math.max(...allScores) : null;
+                          const low = allScores.length ? Math.min(...allScores) : null;
+
+                          return (
+                            <tr key={comp.id} className="hover:bg-slate-50/60 transition">
+                              <td className="px-3 py-2 font-bold text-slate-900">{comp.name}</td>
+                              <td className="px-3 py-2 text-center">
+                                <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  comp.component_type === 'calculated' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-700'
+                                }`}>
+                                  {comp.component_type === 'calculated' ? 'Total (Calculated)' : 'Input Question'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-center font-bold text-slate-800">{comp.maximum_score}</td>
+                              <td className="px-3 py-2 text-center font-extrabold text-slate-900">
+                                {avg !== null ? Math.round(avg * 10) / 10 : '—'}
+                              </td>
+                              <td className="px-3 py-2 text-center font-extrabold text-teal-800">
+                                {avgPct !== null ? `${Math.round(avgPct * 10) / 10}%` : '—'}
+                              </td>
+                              <td className="px-3 py-2 text-center font-bold text-emerald-700">{top !== null ? top : '—'}</td>
+                              <td className="px-3 py-2 text-center font-bold text-amber-700">{low !== null ? low : '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* REPORT TYPE 4: STUDENT PROGRESSION TIMELINE */}
+        {reportType === 'progress' && (
+          <div className="space-y-6">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-black uppercase tracking-wider text-slate-600">
+                  <tr>
+                    <th className="px-4 py-3.5">Student</th>
+                    {compiledReport.assessments.map((ass, i) => (
+                      <th key={ass.id} className="px-4 py-3.5 text-center">
+                        <div>{ass.title}</div>
+                        <div className="text-[10px] font-bold text-slate-400">Step {i + 1}</div>
+                      </th>
+                    ))}
+                    <th className="px-4 py-3.5 text-center">Growth Trajectory</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {compiledReport.studentRows.map((row) => {
+                    const trajectoryScores = compiledReport.assessments.map((ass) => {
+                      const marksObj = row.assessmentMarks[ass.id] || {};
+                      const comps = ass.activeComponents || [];
+                      const sumScore = comps.reduce((sum, c) => {
+                        const m = marksObj[c.id] || marksObj[String(c.id)] || {};
+                        return sum + (Number.isFinite(Number(m.score)) ? Number(m.score) : 0);
+                      }, 0);
+                      const maxScore = comps.reduce((sum, c) => sum + Number(c.maximum_score || 0), 0);
+                      return maxScore > 0 ? (sumScore / maxScore) * 100 : null;
+                    });
+
+                    const validTrajectory = trajectoryScores.filter((s) => s !== null);
+                    let delta = 0;
+                    if (validTrajectory.length >= 2) {
+                      delta = validTrajectory[validTrajectory.length - 1] - validTrajectory[0];
+                    }
+
+                    return (
+                      <tr key={row.student.id} className="hover:bg-slate-50/80 transition">
+                        <td className="px-4 py-3 font-bold text-slate-900 whitespace-nowrap">
+                          {row.student.display_name}
+                        </td>
+                        {trajectoryScores.map((score, i) => (
+                          <td key={i} className="px-4 py-3 text-center whitespace-nowrap">
+                            {score !== null ? (
+                              <span className="font-extrabold text-slate-800">{Math.round(score * 10) / 10}%</span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                        ))}
+                        <td className="px-4 py-3 text-center whitespace-nowrap">
+                          {validTrajectory.length >= 2 ? (
+                            <div className="inline-flex items-center gap-1">
+                              {delta > 0 ? (
+                                <>
+                                  <TrendingUp className="h-4 w-4 text-emerald-600" />
+                                  <span className="text-xs font-black text-emerald-700">+{Math.round(delta * 10) / 10}%</span>
+                                </>
+                              ) : delta < 0 ? (
+                                <>
+                                  <TrendingDown className="h-4 w-4 text-rose-600" />
+                                  <span className="text-xs font-black text-rose-700">{Math.round(delta * 10) / 10}%</span>
+                                </>
+                              ) : (
+                                <span className="text-xs font-bold text-slate-500">0.0% (Stable)</span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400">Baseline</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* REPORT TYPE 5: FINAL GRADE MASTER SHEET */}
+        {reportType === 'final_grade' && (
+          <div className="space-y-6">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-black uppercase tracking-wider text-slate-600">
+                  <tr>
+                    <th className="px-4 py-3.5">Student</th>
+                    <th className="px-4 py-3.5 text-center">Total Points</th>
+                    <th className="px-4 py-3.5 text-center">Cumulative %</th>
+                    <th className="px-4 py-3.5 text-center">Letter Grade</th>
+                    <th className="px-4 py-3.5 text-center">Assessed Count</th>
+                    <th className="px-4 py-3.5 text-center">Academic Standing</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {compiledReport.studentRows.map((row) => (
+                    <tr key={row.student.id} className="hover:bg-slate-50/80 transition">
+                      <td className="px-4 py-3 font-bold text-slate-900 whitespace-nowrap">
+                        {row.student.display_name}
+                      </td>
+                      <td className="px-4 py-3 text-center font-bold text-slate-800 whitespace-nowrap">
+                        {row.totalMax > 0 ? `${row.totalEarned} / ${row.totalMax}` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-center font-black text-teal-800 whitespace-nowrap">
+                        {row.overallPercent !== null ? `${row.overallPercent}%` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-center whitespace-nowrap">
+                        <span className={`inline-block px-3 py-0.5 rounded-lg text-xs font-black border ${gradeColorClass(row.overallGrade)}`}>
+                          {row.overallGrade}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center text-xs font-bold text-slate-600 whitespace-nowrap">
+                        {row.numericCount} / {compiledReport.assessments.length} components
+                      </td>
+                      <td className="px-4 py-3 text-center whitespace-nowrap">
+                        {row.overallPercent !== null && row.overallPercent >= 50 ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                            <Check className="h-3 w-3" /> In Good Standing
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                            <AlertTriangle className="h-3 w-3" /> Academic Review
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

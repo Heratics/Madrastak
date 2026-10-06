@@ -1327,29 +1327,75 @@ app.put('/api/3alamatak/assessments/:id', verifyToken, requireActiveTeacherOrAdm
         [String(title).trim(), strand, topic, assessment_date || null, source_import_id || null, Boolean(is_historical), source_year || null, assessment.id]
       );
       const [existingComponents] = await connection.query(
-        'SELECT id FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
+        'SELECT id, name, maximum_score, sort_order, component_type, calculation_type, source_component_ids, formula_definition FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
         [assessment.id]
       );
       const existingIds = new Set(existingComponents.map((component) => Number(component.id)));
       const retainedIds = new Set();
+      const idMapping = new Map();
+      const pendingCalculated = [];
+
       for (const component of components) {
-        if (component.id && existingIds.has(component.id)) {
-          retainedIds.add(component.id);
+        const numId = component.rawId ? Number(component.rawId) : (component.id && Number.isInteger(Number(component.id))) ? Number(component.id) : null;
+        if (numId !== null && existingIds.has(numId)) {
+          retainedIds.add(numId);
+          idMapping.set(String(component.id), numId);
+          if (component.rawId) idMapping.set(String(component.rawId), numId);
           await connection.query(
             `UPDATE alamatak_assessment_components
-             SET name = ?, maximum_score = ?, sort_order = ?
+             SET name = ?, maximum_score = ?, sort_order = ?,
+                 component_type = ?, calculation_type = ?,
+                 source_component_ids = ?, formula_definition = ?
              WHERE id = ? AND assessment_id = ?`,
-            [component.name, component.maximum_score, component.sort_order, component.id, assessment.id]
+            [
+              component.name,
+              component.maximum_score,
+              component.sort_order,
+              component.component_type || 'input',
+              component.calculation_type || null,
+              component.source_component_ids ? JSON.stringify(component.source_component_ids) : null,
+              component.formula_definition ? JSON.stringify(component.formula_definition) : null,
+              numId,
+              assessment.id,
+            ]
           );
+          if (component.component_type === 'calculated') {
+            pendingCalculated.push({ compId: numId, sourceIds: component.source_component_ids });
+          }
         } else {
           const [createdComponent] = await connection.query(
             `INSERT INTO alamatak_assessment_components
-             (assessment_id, name, maximum_score, sort_order) VALUES (?, ?, ?, ?)`,
-            [assessment.id, component.name, component.maximum_score, component.sort_order]
+             (assessment_id, name, maximum_score, sort_order, component_type, calculation_type, source_component_ids, formula_definition)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              assessment.id,
+              component.name,
+              component.maximum_score,
+              component.sort_order,
+              component.component_type || 'input',
+              component.calculation_type || null,
+              component.source_component_ids ? JSON.stringify(component.source_component_ids) : null,
+              component.formula_definition ? JSON.stringify(component.formula_definition) : null,
+            ]
           );
-          retainedIds.add(Number(createdComponent.insertId));
+          const insertedId = Number(createdComponent.insertId);
+          retainedIds.add(insertedId);
+          idMapping.set(String(component.id), insertedId);
+          if (component.rawId) idMapping.set(String(component.rawId), insertedId);
+          if (component.component_type === 'calculated') {
+            pendingCalculated.push({ compId: insertedId, sourceIds: component.source_component_ids });
+          }
         }
       }
+
+      for (const calc of pendingCalculated) {
+        const remapped = (calc.sourceIds || []).map((sId) => idMapping.get(String(sId)) || (Number.isInteger(Number(sId)) ? Number(sId) : sId));
+        await connection.query(
+          'UPDATE alamatak_assessment_components SET source_component_ids = ? WHERE id = ? AND assessment_id = ?',
+          [JSON.stringify(remapped), calc.compId, assessment.id]
+        );
+      }
+
       const removedIds = [...existingIds].filter((id) => !retainedIds.has(id));
       if (removedIds.length) {
         await connection.query(
@@ -1360,7 +1406,7 @@ app.put('/api/3alamatak/assessments/:id', verifyToken, requireActiveTeacherOrAdm
       }
       await connection.commit();
       const [savedComponents] = await db.query(
-        'SELECT id, assessment_id, name, maximum_score, sort_order FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
+        'SELECT id, assessment_id, name, maximum_score, sort_order, component_type, calculation_type, source_component_ids, formula_definition FROM alamatak_assessment_components WHERE assessment_id = ? ORDER BY sort_order, id',
         [assessment.id]
       );
       res.json({ id: assessment.id, gradebook_id: assessment.gradebook_id, title: String(title).trim(), strand, topic, assessment_date, source_import_id, is_historical: Boolean(is_historical), source_year, components: savedComponents });
@@ -1449,30 +1495,29 @@ app.put('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeache
     const assessment = await getOwnedAssessment(req, req.params.id);
     if (!assessment) return res.status(404).json({ message: 'Assessment not found.' });
     const [components] = await db.query(
-      'SELECT id, maximum_score FROM alamatak_assessment_components WHERE assessment_id = ?',
+      'SELECT id, maximum_score, component_type FROM alamatak_assessment_components WHERE assessment_id = ?',
       [assessment.id]
     );
     const componentMap = new Map(components.map((component) => [Number(component.id), Number(component.maximum_score)]));
+    const calculatedCompSet = new Set(components.filter((c) => c.component_type === 'calculated').map((c) => Number(c.id)));
     const studentIds = [...new Set(entries.map((entry) => Number(entry.student_id)).filter(Boolean))];
     const [students] = await db.query(
       `SELECT id FROM alamatak_students WHERE gradebook_id = ? AND id IN (?)`,
       [assessment.gradebook_id, studentIds]
     );
     const studentSet = new Set(students.map((student) => Number(student.id)));
-    const [fullComponents] = await db.query(
-      'SELECT id, component_type FROM alamatak_assessment_components WHERE assessment_id = ?',
-      [assessment.id]
-    );
-    const calculatedCompSet = new Set(fullComponents.filter((c) => c.component_type === 'calculated').map((c) => Number(c.id)));
+
     const validEntries = [];
-    for (const entry of validEntries) {
+    for (const entry of entries) {
       const studentId = Number(entry.student_id);
       const componentId = Number(entry.component_id);
       if (calculatedCompSet.has(componentId)) {
-        // Skip calculated components without throwing error, or return if intended
+        // Skip calculated components without error
         continue;
       }
-      if (!studentSet.has(studentId) || !componentMap.has(componentId)) return res.status(400).json({ message: 'Mark entry references an invalid student or component.' });
+      if (!studentSet.has(studentId) || !componentMap.has(componentId)) {
+        return res.status(400).json({ message: 'Mark entry references an invalid student or component.' });
+      }
       const score = entry.score === '' || entry.score === null || entry.score === undefined ? null : Number(entry.score);
       if (score !== null && (!Number.isFinite(score) || score < 0 || score > componentMap.get(componentId))) {
         return res.status(400).json({ message: 'A mark is outside its component maximum.' });
@@ -1482,7 +1527,7 @@ app.put('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeache
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
-      for (const entry of entries) {
+      for (const entry of validEntries) {
         const score = entry.score === '' || entry.score === null || entry.score === undefined ? null : Number(entry.score);
         await connection.query(
           `INSERT INTO alamatak_marks
@@ -1494,7 +1539,7 @@ app.put('/api/3alamatak/assessments/:id/marks', verifyToken, requireActiveTeache
         );
       }
       await connection.commit();
-      res.json({ message: 'Marks saved.', saved: entries.length });
+      res.json({ message: 'Marks saved.', saved: validEntries.length });
     } catch (error) {
       await connection.rollback();
       throw error;

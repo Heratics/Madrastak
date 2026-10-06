@@ -31,6 +31,7 @@ import {
 import { validateAssessmentInput, validateGradebookInput, validateStudentInput } from './validation.js';
 import { toClassUpdatePayload, toEditableClassState } from '../../../pages/classPersistence.js';
 import { analyticsBarWidth, buildAnalyticsDashboardModel, formatAnalyticsPercent } from './analyticsView.js';
+import { validateComponentDefinitions, calculateComponentMarks } from './componentCalculation.js';
 
 test('grade calculations preserve completion and partial states', () => {
   const assessment = {
@@ -397,4 +398,54 @@ test('analytics dashboard view model handles empty and unconfigured final-grade 
   assert.equal(model.assessmentRows.length, 0);
   assert.equal(model.componentRows.length, 0);
   assert.equal(model.finalGradeRows.length, 0);
+});
+
+test('frontend component calculation engine computes calculated totals and validates dependencies', () => {
+  const comps = [
+    { id: '1', name: 'Q1', maximum_score: 5, component_type: 'input' },
+    { id: '2', name: 'Q2', maximum_score: 10, component_type: 'input' },
+    { id: '3', name: 'Total', component_type: 'calculated', calculation_type: 'sum', source_component_ids: ['1', '2'] },
+  ];
+  const validation = validateComponentDefinitions(comps);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.components.find((c) => c.id === '3').maximum_score, 15);
+
+  const rawMarks = { '1': 4, '2': 8 };
+  const calculated = calculateComponentMarks(comps, rawMarks);
+  assert.equal(calculated['3'].score, 12);
+  assert.equal(calculated['3'].is_calculated, true);
+});
+
+test('report data compilation filters students, computes active components, and calculates metrics', () => {
+  const students = [
+    { id: 1, display_name: 'Ahmad' },
+    { id: 2, display_name: 'Aya' },
+  ];
+  const assessments = [
+    {
+      id: 10,
+      title: 'Quiz 1',
+      components: [
+        { id: 101, name: 'Part 1', maximum_score: 20, component_type: 'input' },
+        { id: 102, name: 'Part 2', maximum_score: 30, component_type: 'input' },
+        { id: 103, name: 'Total', maximum_score: 50, component_type: 'calculated', source_component_ids: [101, 102] },
+      ],
+    },
+  ];
+  const marks = {
+    '1:101': { score: 18 },
+    '1:102': { score: 27 },
+    '2:101': { score: 10 },
+    '2:102': { score: 15 },
+  };
+
+  // Compute calculated marks for student 1: 18 + 27 = 45 / 50 (90%)
+  const st1Marks = { '101': marks['1:101'], '102': marks['1:102'] };
+  const st1Calc = calculateComponentMarks(assessments[0].components, st1Marks);
+  assert.equal(st1Calc['103'].score, 45);
+
+  // Compute calculated marks for student 2: 10 + 15 = 25 / 50 (50%)
+  const st2Marks = { '101': marks['2:101'], '102': marks['2:102'] };
+  const st2Calc = calculateComponentMarks(assessments[0].components, st2Marks);
+  assert.equal(st2Calc['103'].score, 25);
 });

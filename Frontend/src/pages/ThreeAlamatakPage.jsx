@@ -307,6 +307,7 @@ export default function ThreeAlamatakPage() {
       await threeAlamatakApi.archiveGradebook(id);
       notify('Gradebook archived.');
       await loadGradebooks(null, 'active');
+      setView('classes');
     } catch (e) {
       setError(e.message);
     } finally {
@@ -335,6 +336,7 @@ export default function ThreeAlamatakPage() {
       await threeAlamatakApi.permanentlyDeleteGradebook(id);
       notify('Gradebook permanently deleted.');
       await loadGradebooks(null, gradebookTab);
+      setView('classes');
     } catch (e) {
       setError(e.message);
     } finally {
@@ -808,10 +810,6 @@ export default function ThreeAlamatakPage() {
               onArchive={handleArchiveGradebook}
               onRestore={handleRestoreGradebook}
               onDelete={handlePermanentDeleteGradebook}
-              onNew={() => {
-                setEditingGradebook(null);
-                setShowGradebookForm(true);
-              }}
             />
           )}
 
@@ -1151,7 +1149,7 @@ function DashboardView({ gradebook, students, assessments, analytics, onNavigate
 }
 
 // -------------------------------------------------------------
-// CLASSES VIEW
+// CLASSES VIEW (GRADEBOOK DIRECTORY)
 // -------------------------------------------------------------
 function ClassesView({
   gradebooks,
@@ -1163,7 +1161,6 @@ function ClassesView({
   onArchive,
   onRestore,
   onDelete,
-  onNew,
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -1172,8 +1169,8 @@ function ClassesView({
           <button
             type="button"
             onClick={() => onTabChange('active')}
-            className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
-              gradebookTab === 'active' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            className={`rounded-xl px-4 py-2 text-xs font-bold transition cursor-pointer ${
+              gradebookTab === 'active' ? 'bg-teal-700 text-white shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
             Active Gradebooks
@@ -1181,20 +1178,16 @@ function ClassesView({
           <button
             type="button"
             onClick={() => onTabChange('archived')}
-            className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
-              gradebookTab === 'archived' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            className={`rounded-xl px-4 py-2 text-xs font-bold transition cursor-pointer ${
+              gradebookTab === 'archived' ? 'bg-teal-700 text-white shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            Archived Archive
+            Archived
           </button>
         </div>
-        <button
-          type="button"
-          onClick={onNew}
-          className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-xs font-bold text-white hover:bg-teal-600 shadow-sm"
-        >
-          <Plus className="h-4 w-4" /> Create Gradebook
-        </button>
+        <div className="text-xs text-slate-400 font-semibold">
+          {gradebooks.length} {gradebookTab} {gradebooks.length === 1 ? 'gradebook' : 'gradebooks'}
+        </div>
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1233,8 +1226,9 @@ function ClassesView({
                 <button
                   type="button"
                   onClick={() => onEdit(g)}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
                   title="Edit metadata"
+                  aria-label="Edit metadata"
                 >
                   <Sliders className="h-3.5 w-3.5" />
                 </button>
@@ -1243,16 +1237,18 @@ function ClassesView({
                     <button
                       type="button"
                       onClick={() => onRestore(g.id)}
-                      className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50"
+                      className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 cursor-pointer"
                       title="Restore gradebook"
+                      aria-label="Restore gradebook"
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
                     </button>
                     <button
                       type="button"
                       onClick={() => onDelete(g.id)}
-                      className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"
+                      className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 cursor-pointer"
                       title="Permanently delete"
+                      aria-label="Permanently delete"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -1261,8 +1257,9 @@ function ClassesView({
                   <button
                     type="button"
                     onClick={() => onArchive(g.id)}
-                    className="rounded-lg p-1.5 text-amber-600 hover:bg-amber-50"
+                    className="rounded-lg p-1.5 text-amber-600 hover:bg-amber-50 cursor-pointer"
                     title="Archive gradebook"
+                    aria-label="Archive gradebook"
                   >
                     <Archive className="h-3.5 w-3.5" />
                   </button>

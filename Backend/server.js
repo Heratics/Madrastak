@@ -960,7 +960,6 @@ app.delete('/api/3alamatak/gradebooks/:id/permanent', verifyToken, requireActive
   try {
     const gradebook = await getAlamatakGradebook(req, req.params.id);
     if (!gradebook) return res.status(404).json({ message: 'Gradebook not found.' });
-    if (gradebook.status !== 'archived') return res.status(409).json({ message: 'Only archived gradebooks can be permanently deleted.' });
     const [result] = await db.query('DELETE FROM alamatak_gradebooks WHERE id = ?', [gradebook.id]);
     if (!result.affectedRows) return res.status(404).json({ message: 'Gradebook not found.' });
     res.json({ message: 'Gradebook permanently deleted.' });

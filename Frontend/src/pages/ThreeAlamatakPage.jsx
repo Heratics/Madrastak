@@ -131,7 +131,9 @@ export default function ThreeAlamatakPage() {
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
   const [marks, setMarks] = useState({});
   const [search, setSearch] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [showGradebookForm, setShowGradebookForm] = useState(false);
@@ -153,14 +155,16 @@ export default function ThreeAlamatakPage() {
 
   const loadGradebooks = async (preferredId = selectedId, status = gradebookTab) => {
     try {
-      setBusy(true);
+      setDirectoryLoading(true);
       const list = await threeAlamatakApi.listGradebooks(status);
-      setGradebooks(list);
-      const nextId = preferredId && list.some((item) => item.id === preferredId)
+      setGradebooks(list || []);
+      const nextId = preferredId && list?.some((item) => item.id === preferredId)
         ? preferredId
-        : (list[0]?.id || null);
-      setSelectedId(nextId);
-      if (!nextId) {
+        : (status === 'active' ? (list?.[0]?.id || null) : null);
+      if (status === 'active' || nextId !== null) {
+        setSelectedId(nextId);
+      }
+      if (!nextId && status === 'active') {
         setGradebook(null);
         setStudents([]);
         setAssessments([]);
@@ -174,7 +178,7 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setDirectoryLoading(false);
     }
   };
 
@@ -188,17 +192,15 @@ export default function ThreeAlamatakPage() {
       return;
     }
     try {
-      setBusy(true);
-      // Parallelize workspace queries
-      const [g, stus, asses, schs, hist, imps, an, chks] = await Promise.all([
+      setWorkspaceLoading(true);
+      // Parallelize core workspace queries
+      const [g, stus, asses, schs, hist, imps] = await Promise.all([
         threeAlamatakApi.getGradebook(id),
         threeAlamatakApi.listStudents(id),
         threeAlamatakApi.listAssessments(id),
         threeAlamatakApi.listSchemes(id),
         threeAlamatakApi.listHistoricalRecords(id),
         threeAlamatakApi.listImports(id),
-        threeAlamatakApi.getAnalytics(id).catch(() => null),
-        threeAlamatakApi.listCheckpoints(id).catch(() => []),
       ]);
       setGradebook(g);
       setStudents(stus || []);
@@ -206,15 +208,16 @@ export default function ThreeAlamatakPage() {
       setSchemes(schs || []);
       setHistoricalRecords(hist || []);
       setImportHistory(imps || []);
-      setAnalytics(an);
-      setCheckpoints(chks || []);
       if (asses?.length && (!activeAssessmentId || !asses.some((a) => a.id === activeAssessmentId))) {
         setActiveAssessmentId(asses[0].id);
       }
+      // Non-blocking asynchronous background fetches
+      threeAlamatakApi.getAnalytics(id).then(setAnalytics).catch(() => {});
+      threeAlamatakApi.listCheckpoints(id).then(setCheckpoints).catch(() => {});
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setWorkspaceLoading(false);
     }
   };
 
@@ -263,7 +266,7 @@ export default function ThreeAlamatakPage() {
   const handleSaveMarks = async () => {
     if (!activeAssessment) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       // Filter out calculated marks - they are derived automatically
       const entries = Object.values(marks).filter((m) => !m.is_calculated);
       await threeAlamatakApi.saveMarks(activeAssessment.id, entries);
@@ -274,13 +277,13 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleSaveGradebook = async (payload) => {
     try {
-      setBusy(true);
+      setSyncing(true);
       if (editingGradebook) {
         const updated = await threeAlamatakApi.updateGradebook(editingGradebook.id, payload);
         notify('Gradebook updated.');
@@ -296,14 +299,14 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleArchiveGradebook = async (id) => {
     if (!window.confirm('Archive this gradebook? It will be hidden from the active list but can be restored anytime.')) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       await threeAlamatakApi.archiveGradebook(id);
       notify('Gradebook archived.');
       await loadGradebooks(null, 'active');
@@ -311,13 +314,13 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleRestoreGradebook = async (id) => {
     try {
-      setBusy(true);
+      setSyncing(true);
       await threeAlamatakApi.restoreGradebook(id);
       notify('Gradebook restored to active.');
       await loadGradebooks(id, 'active');
@@ -325,14 +328,14 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handlePermanentDeleteGradebook = async (id) => {
     if (!window.confirm('PERMANENT DESTRUCTION: This will permanently delete this gradebook and all its students, marks, assessments, and backups. This action CANNOT be undone. Proceed?')) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       await threeAlamatakApi.permanentlyDeleteGradebook(id);
       notify('Gradebook permanently deleted.');
       await loadGradebooks(null, gradebookTab);
@@ -340,14 +343,14 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleSaveStudent = async (payload) => {
     if (!selectedId) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       if (editingStudent) {
         await threeAlamatakApi.updateStudent(selectedId, editingStudent.id, payload);
         notify('Student updated.');
@@ -361,14 +364,14 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleSaveAssessment = async (payload) => {
     if (!selectedId) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       if (editingAssessment) {
         await threeAlamatakApi.updateAssessment(editingAssessment.id, payload);
         notify('Assessment updated.');
@@ -383,28 +386,28 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleDeleteAssessment = async (id) => {
     if (!window.confirm('Delete this assessment and all its marks?')) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       await threeAlamatakApi.deleteAssessment(id);
       notify('Assessment deleted.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleSaveScheme = async (payload) => {
     if (!selectedId) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       if (editingScheme) {
         await threeAlamatakApi.updateScheme(selectedId, editingScheme.id, payload);
         notify('Grading scheme updated.');
@@ -418,28 +421,28 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleDeleteScheme = async (schemeId) => {
     if (!window.confirm('Delete this grading scheme?')) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       await threeAlamatakApi.deleteScheme(selectedId, schemeId);
       notify('Grading scheme deleted.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleSaveRecord = async (payload) => {
     if (!selectedId) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       if (editingRecord) {
         await threeAlamatakApi.updateHistoricalRecord(editingRecord.id, payload);
         notify('Record updated.');
@@ -453,21 +456,21 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleDeleteRecord = async (id) => {
     if (!window.confirm('Delete this record?')) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       await threeAlamatakApi.deleteHistoricalRecord(id);
       notify('Record deleted.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
@@ -541,14 +544,14 @@ export default function ThreeAlamatakPage() {
   const handleValidateBackup = async (fileOrPayload) => {
     if (!selectedId) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       const validation = await threeAlamatakApi.validateBackup(selectedId, fileOrPayload);
       setRestorePreview({ validation, fileOrPayload });
       notify('Backup validated. Inspect diff before executing replace restore.');
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
@@ -556,7 +559,7 @@ export default function ThreeAlamatakPage() {
     if (!selectedId || !restorePreview?.fileOrPayload) return;
     if (!window.confirm('REPLACE RESTORE: This will replace all current gradebook data with the backup snapshot. An automatic pre-restore checkpoint will be captured. Continue?')) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       const res = await threeAlamatakApi.restoreBackup(selectedId, restorePreview.fileOrPayload);
       notify(`Restore successful: ${res.manifest?.marks_restored || 0} marks restored.`);
       setRestorePreview(null);
@@ -564,35 +567,35 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleRestoreCheckpoint = async (checkpointId) => {
     if (!window.confirm('Rollback to this recovery checkpoint? Current state will be snapshotted first.')) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       await threeAlamatakApi.restoreCheckpoint(selectedId, checkpointId);
       notify('Gradebook successfully restored from recovery checkpoint.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
   const handleDeleteCheckpoint = async (checkpointId) => {
     if (!window.confirm('Delete this recovery checkpoint?')) return;
     try {
-      setBusy(true);
+      setSyncing(true);
       await threeAlamatakApi.deleteCheckpoint(selectedId, checkpointId);
       notify('Checkpoint deleted.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setSyncing(false);
     }
   };
 
@@ -643,7 +646,7 @@ export default function ThreeAlamatakPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {busy && (
+          {syncing && (
             <span className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">
               <RefreshCw className="h-3.5 w-3.5 animate-spin text-teal-600" /> Syncing…
             </span>
@@ -773,15 +776,6 @@ export default function ThreeAlamatakPage() {
             )}
           </div>
 
-          {/* Skeletons on initial load */}
-          {busy && !gradebook && selectedId && (
-            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="h-6 w-1/3 animate-pulse rounded-lg bg-slate-200" />
-              <div className="h-32 animate-pulse rounded-xl bg-slate-100" />
-              <div className="h-48 animate-pulse rounded-xl bg-slate-100" />
-            </div>
-          )}
-
           {/* VIEW SWITCHER */}
           {view === 'dashboard' && (
             <DashboardView
@@ -789,6 +783,7 @@ export default function ThreeAlamatakPage() {
               students={students}
               assessments={assessments}
               analytics={analytics}
+              loading={workspaceLoading && !gradebook}
               onNavigate={(tabKey) => setView(tabKey)}
             />
           )}
@@ -798,6 +793,7 @@ export default function ThreeAlamatakPage() {
               gradebooks={gradebooks}
               selectedId={selectedId}
               gradebookTab={gradebookTab}
+              loading={directoryLoading}
               onTabChange={setGradebookTab}
               onSelect={(id) => {
                 setSelectedId(id);
@@ -818,6 +814,7 @@ export default function ThreeAlamatakPage() {
               gradebookId={selectedId}
               students={students}
               search={search}
+              loading={workspaceLoading && !gradebook}
               onSearchChange={setSearch}
               onAddStudent={() => {
                 setEditingStudent(null);
@@ -834,6 +831,7 @@ export default function ThreeAlamatakPage() {
           {view === 'workspace' && (
             <WorkspaceView
               gradebookId={selectedId}
+              gradebook={gradebook}
               students={students}
               assessments={assessments}
               activeAssessment={activeAssessment}
@@ -842,6 +840,7 @@ export default function ThreeAlamatakPage() {
               schemes={schemes}
               historicalRecords={historicalRecords}
               importHistory={importHistory}
+              loading={workspaceLoading && !gradebook}
               onAddStudent={() => {
                 setEditingStudent(null);
                 setShowStudentForm(true);
@@ -908,6 +907,7 @@ export default function ThreeAlamatakPage() {
               assessments={assessments}
               analytics={analytics}
               marks={marks}
+              loading={workspaceLoading && !gradebook}
               onExportCsv={handleExportCsv}
               onExportJson={handleExportCanonicalJson}
               onExportXml={handleExportXml}
@@ -925,6 +925,7 @@ export default function ThreeAlamatakPage() {
               restorePreview={restorePreview}
               setRestorePreview={setRestorePreview}
               importHistory={importHistory}
+              loading={workspaceLoading && !gradebook}
               onEditGradebook={() => {
                 setEditingGradebook(gradebook);
                 setShowGradebookForm(true);
@@ -1028,7 +1029,23 @@ export default function ThreeAlamatakPage() {
 // -------------------------------------------------------------
 // DASHBOARD VIEW
 // -------------------------------------------------------------
-function DashboardView({ gradebook, students, assessments, analytics, onNavigate }) {
+function DashboardView({ gradebook, students, assessments, analytics, loading, onNavigate }) {
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-24 animate-pulse rounded-2xl bg-white border border-slate-200 p-5" />
+          ))}
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="h-64 animate-pulse rounded-2xl bg-white border border-slate-200 p-6" />
+          <div className="h-64 animate-pulse rounded-2xl bg-white border border-slate-200 p-6" />
+        </div>
+      </div>
+    );
+  }
+
   if (!gradebook) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
@@ -1038,7 +1055,7 @@ function DashboardView({ gradebook, students, assessments, analytics, onNavigate
         <button
           type="button"
           onClick={() => onNavigate('classes')}
-          className="mt-6 inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-teal-600"
+          className="mt-6 inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-teal-600 cursor-pointer"
         >
           View Gradebooks <ChevronRight className="h-4 w-4" />
         </button>
@@ -1155,6 +1172,7 @@ function ClassesView({
   gradebooks,
   selectedId,
   gradebookTab,
+  loading,
   onTabChange,
   onSelect,
   onEdit,
@@ -1186,94 +1204,118 @@ function ClassesView({
           </button>
         </div>
         <div className="text-xs text-slate-400 font-semibold">
-          {gradebooks.length} {gradebookTab} {gradebooks.length === 1 ? 'gradebook' : 'gradebooks'}
+          {loading ? 'Loading…' : `${gradebooks.length} ${gradebookTab} ${gradebooks.length === 1 ? 'gradebook' : 'gradebooks'}`}
         </div>
       </div>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {gradebooks.map((g) => (
-          <div
-            key={g.id}
-            className={`flex flex-col justify-between rounded-2xl border p-5 transition ${
-              selectedId === g.id ? 'border-teal-600 bg-teal-50/40 ring-2 ring-teal-600/20' : 'border-slate-200 bg-white hover:border-slate-300'
-            }`}
-          >
-            <div>
+      {loading ? (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 animate-pulse space-y-4">
               <div className="flex items-center justify-between">
-                <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-extrabold uppercase text-slate-600">
-                  {g.academic_year || 'Academic Year'}
-                </span>
-                {g.archived ? (
-                  <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">Archived</span>
-                ) : (
-                  <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">Active</span>
-                )}
+                <div className="h-4 w-20 rounded bg-slate-200" />
+                <div className="h-4 w-14 rounded bg-slate-200" />
               </div>
-              <h4 className="mt-3 text-lg font-black text-slate-900">{g.title}</h4>
-              <p className="mt-1 text-xs font-semibold text-slate-500">{g.subject || 'General'} · {g.class_name || 'Standard'}</p>
-              {g.description && <p className="mt-2 text-xs text-slate-600 line-clamp-2">{g.description}</p>}
+              <div className="space-y-2">
+                <div className="h-5 w-3/4 rounded bg-slate-200" />
+                <div className="h-3.5 w-1/2 rounded bg-slate-100" />
+              </div>
+              <div className="border-t border-slate-100 pt-3 flex justify-between">
+                <div className="h-4 w-24 rounded bg-slate-100" />
+                <div className="h-4 w-12 rounded bg-slate-100" />
+              </div>
             </div>
-
-            <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-3">
-              <button
-                type="button"
-                onClick={() => onSelect(g.id)}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-teal-700 hover:text-teal-800"
+          ))}
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {gradebooks.map((g) => {
+            const isArchived = g.status === 'archived';
+            return (
+              <div
+                key={g.id}
+                className={`flex flex-col justify-between rounded-2xl border p-5 transition ${
+                  selectedId === g.id ? 'border-teal-600 bg-teal-50/40 ring-2 ring-teal-600/20' : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
               >
-                Open Workspace <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => onEdit(g)}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
-                  title="Edit metadata"
-                  aria-label="Edit metadata"
-                >
-                  <Sliders className="h-3.5 w-3.5" />
-                </button>
-                {g.archived ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => onRestore(g.id)}
-                      className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 cursor-pointer"
-                      title="Restore gradebook"
-                      aria-label="Restore gradebook"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDelete(g.id)}
-                      className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 cursor-pointer"
-                      title="Permanently delete"
-                      aria-label="Permanently delete"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => onArchive(g.id)}
-                    className="rounded-lg p-1.5 text-amber-600 hover:bg-amber-50 cursor-pointer"
-                    title="Archive gradebook"
-                    aria-label="Archive gradebook"
-                  >
-                    <Archive className="h-3.5 w-3.5" />
-                  </button>
-                )}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-extrabold uppercase text-slate-600">
+                      {g.academic_year || 'Academic Year'}
+                    </span>
+                    {isArchived ? (
+                      <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">Archived</span>
+                    ) : (
+                      <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">Active</span>
+                    )}
+                  </div>
+                  <h4 className="mt-3 text-lg font-black text-slate-900">{g.title}</h4>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">{g.subject || 'General'} · {g.class_name || 'Standard'}</p>
+                  {g.description && <p className="mt-2 text-xs text-slate-600 line-clamp-2">{g.description}</p>}
+                </div>
+
+                <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-3">
+                  {isArchived ? (
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onRestore(g.id)}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-teal-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-teal-600 transition cursor-pointer shadow-2xs"
+                        title="Restore gradebook to active"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" /> Restore
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(g.id)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-bold text-red-700 hover:bg-red-100 hover:text-red-800 transition cursor-pointer"
+                        title="Permanently delete gradebook"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete Permanently
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex w-full items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => onSelect(g.id)}
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-teal-700 hover:text-teal-800 cursor-pointer"
+                      >
+                        Open Workspace <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onEdit(g)}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+                          title="Settings / Edit metadata"
+                          aria-label="Settings / Edit metadata"
+                        >
+                          <Sliders className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onArchive(g.id)}
+                          className="rounded-lg p-1.5 text-amber-600 hover:bg-amber-50 cursor-pointer"
+                          title="Archive gradebook"
+                          aria-label="Archive gradebook"
+                        >
+                          <Archive className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
+            );
+          })}
+          {!gradebooks.length && (
+            <div className="col-span-full py-12 text-center text-sm text-slate-400 italic">
+              No {gradebookTab} gradebooks found.
             </div>
-          </div>
-        ))}
-        {!gradebooks.length && (
-          <div className="col-span-full py-12 text-center text-sm text-slate-400 italic">
-            No {gradebookTab} gradebooks found.
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1283,6 +1325,7 @@ function ClassesView({
 // -------------------------------------------------------------
 function WorkspaceView({
   gradebookId,
+  gradebook,
   students,
   assessments,
   activeAssessment,
@@ -1291,6 +1334,7 @@ function WorkspaceView({
   schemes,
   historicalRecords,
   importHistory,
+  loading,
   onAddStudent,
   onEditStudent,
   onAddAssessment,
@@ -1308,6 +1352,15 @@ function WorkspaceView({
   analytics,
 }) {
   const [tab, setTab] = useState('markbook');
+
+  if (loading && !gradebook) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <div className="h-6 w-1/4 animate-pulse rounded-lg bg-slate-200" />
+        <div className="h-40 animate-pulse rounded-xl bg-slate-100" />
+      </div>
+    );
+  }
 
   if (!gradebookId) {
     return (
@@ -2175,6 +2228,7 @@ function ReportsView({
   assessments,
   analytics,
   marks,
+  loading,
   onExportCsv,
   onExportJson,
   onExportXml,
@@ -2199,14 +2253,33 @@ function ReportsView({
     switch (studentFilter) {
       case 'attention':
         const attentionSet = new Set((analytics?.needs_attention || []).map((a) => a.student_id));
-        return students.filter((s) => attentionSet.has(s.id));
+        return (students || []).filter((s) => attentionSet.has(s.id));
       case 'selected':
-        return students.filter((s) => selectedStudentIds.has(s.id));
+        return (students || []).filter((s) => selectedStudentIds.has(s.id));
       case 'all':
       default:
-        return students;
+        return students || [];
     }
   }, [students, studentFilter, selectedStudentIds, analytics]);
+
+  if (loading && !gradebook) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <div className="h-8 w-1/3 animate-pulse rounded-lg bg-slate-200" />
+        <div className="h-64 animate-pulse rounded-xl bg-slate-100" />
+      </div>
+    );
+  }
+
+  if (!gradebookId || !gradebook) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+        <Printer className="mx-auto h-12 w-12 text-slate-400" />
+        <h3 className="mt-3 text-lg font-bold text-slate-700">No Gradebook Selected</h3>
+        <p className="mt-1 text-sm text-slate-500">Please select a gradebook from the sidebar to generate reports.</p>
+      </div>
+    );
+  }
 
   // Filter assessments
   const filteredAssessments = useMemo(() => {
@@ -3111,6 +3184,7 @@ function SettingsView({
   restorePreview,
   setRestorePreview,
   importHistory,
+  loading,
   onEditGradebook,
   onArchive,
   onRestore,
@@ -3128,6 +3202,15 @@ function SettingsView({
   onReload,
 }) {
   const [activeTab, setActiveTab] = useState('general');
+
+  if (loading && !gradebook) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <div className="h-8 w-1/3 animate-pulse rounded-lg bg-slate-200" />
+        <div className="h-48 animate-pulse rounded-xl bg-slate-100" />
+      </div>
+    );
+  }
 
   if (!gradebook || !gradebookId) {
     return (
@@ -3758,11 +3841,30 @@ function AssessmentForm({ assessment, onCancel, onSubmit }) {
 // -------------------------------------------------------------
 // AUXILIARY TABS & VIEWS (STUDENTS, SCHEMES, RECORDS, IMPORTS)
 // -------------------------------------------------------------
-function StudentsView({ gradebookId, students, search, onSearchChange, onAddStudent, onEditStudent, onReload }) {
+function StudentsView({ gradebookId, students, search, loading, onSearchChange, onAddStudent, onEditStudent, onReload }) {
   const filtered = useMemo(() => {
     const q = (search || '').toLowerCase();
-    return students.filter((s) => s.display_name?.toLowerCase().includes(q) || s.external_student_id?.includes(q));
+    return (students || []).filter((s) => s.display_name?.toLowerCase().includes(q) || s.external_student_id?.includes(q));
   }, [students, search]);
+
+  if (loading && !(students || []).length) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <div className="h-8 w-1/3 animate-pulse rounded-lg bg-slate-200" />
+        <div className="h-64 animate-pulse rounded-xl bg-slate-100" />
+      </div>
+    );
+  }
+
+  if (!gradebookId) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+        <Users className="mx-auto h-12 w-12 text-slate-400" />
+        <h3 className="mt-3 text-lg font-bold text-slate-700">No Gradebook Selected</h3>
+        <p className="mt-1 text-sm text-slate-500">Please select a gradebook from the sidebar to view student roster.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

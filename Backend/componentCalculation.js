@@ -1,6 +1,6 @@
 /**
  * 3alamatak Assessment Component Calculation Engine
- * 
+ *
  * Supports:
  * - Input components (teacher entered marks)
  * - Calculated components (SUM / Total automatically computed from source components)
@@ -86,7 +86,7 @@ function validateComponentDefinitions(rawComponents) {
   }
 
   // Cycle detection & Topological Sort via DFS
-  const visited = new Map(); // id -> 0: unvisited, 1: visiting, 2: visited
+  const visited = new Map();
   const order = [];
 
   function visit(nodeId, path = []) {
@@ -180,21 +180,18 @@ function calculateComponentMarks(components, studentMarks) {
 
     const sourceMarks = comp.source_component_ids.map((srcId) => result[srcId] || { score: null, mark_status: null });
 
-    // Check if all sources exempt
     const allExempt = sourceMarks.length > 0 && sourceMarks.every((m) => /exempt/i.test(m.mark_status || ''));
     if (allExempt) {
       result[compId] = { score: null, mark_status: 'exempt', is_calculated: true };
       continue;
     }
 
-    // Check if all sources absent
     const allAbsent = sourceMarks.length > 0 && sourceMarks.every((m) => /absent/i.test(m.mark_status || '') && (m.score === null || m.score === undefined));
     if (allAbsent) {
       result[compId] = { score: null, mark_status: 'absent', is_calculated: true };
       continue;
     }
 
-    // Sum valid scores
     let sum = 0;
     let anyScore = false;
     let hasMissing = false;

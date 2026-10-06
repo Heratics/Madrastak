@@ -1,6 +1,18 @@
 /**
- * 3alamatak Frontend Assessment Component Calculation Engine
+ * 3alamatak Assessment Component Calculation Engine (Frontend)
+ *
+ * Supports:
+ * - Input components (teacher entered marks)
+ * - Calculated components (SUM / Total automatically computed from source components)
+ * - Automatic maximum score calculation for sum totals
+ * - Cycle detection and dependency graph validation
+ * - Mixed status handling (absent, missing, exempt, partial, valid zero)
  */
+
+export function numeric(value, fallback = null) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
 
 export function normalizeSourceComponentIds(raw) {
   if (!raw) return [];
@@ -63,7 +75,7 @@ export function validateComponentDefinitions(rawComponents) {
         if (srcId === c.id) {
           errors.push(`Calculated component "${c.name}" cannot depend on itself.`);
         } else if (!componentMap.has(srcId)) {
-          errors.push(`Calculated component "${c.name}" references non-existent component.`);
+          errors.push(`Calculated component "${c.name}" references non-existent component ${srcId}.`);
         }
       }
     }

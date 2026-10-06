@@ -381,6 +381,10 @@ async function runMigrations() {
       if (!/duplicate column/i.test(error.message || '')) throw error;
     }
     try { await pool.query('ALTER TABLE alamatak_students ADD COLUMN source_import_id INT NULL AFTER notes'); } catch (error) { if (!/duplicate column/i.test(error.message || '')) throw error; }
+    try { await pool.query("ALTER TABLE alamatak_assessment_components ADD COLUMN component_type VARCHAR(32) NOT NULL DEFAULT 'input' AFTER sort_order"); } catch (error) { if (!/duplicate column/i.test(error.message || '')) throw error; }
+    try { await pool.query("ALTER TABLE alamatak_assessment_components ADD COLUMN calculation_type VARCHAR(32) NULL AFTER component_type"); } catch (error) { if (!/duplicate column/i.test(error.message || '')) throw error; }
+    try { await pool.query("ALTER TABLE alamatak_assessment_components ADD COLUMN source_component_ids JSON NULL AFTER calculation_type"); } catch (error) { if (!/duplicate column/i.test(error.message || '')) throw error; }
+    try { await pool.query("ALTER TABLE alamatak_assessment_components ADD COLUMN formula_definition JSON NULL AFTER source_component_ids"); } catch (error) { if (!/duplicate column/i.test(error.message || '')) throw error; }
     try { await pool.query('ALTER TABLE alamatak_students ADD CONSTRAINT fk_alamatak_student_import FOREIGN KEY (source_import_id) REFERENCES alamatak_imports(id) ON DELETE SET NULL'); } catch (error) { if (!/(duplicate|already exists)/i.test(error.message || '')) throw error; }
     try { await pool.query('ALTER TABLE alamatak_imports ADD COLUMN source_fingerprint CHAR(64) NULL AFTER metadata'); } catch (error) { if (!/duplicate column/i.test(error.message || '')) throw error; }
     try { await pool.query("ALTER TABLE alamatak_imports ADD COLUMN status ENUM('completed','rolled_back','failed') NOT NULL DEFAULT 'completed' AFTER source_fingerprint"); } catch (error) { if (!/duplicate column/i.test(error.message || '')) throw error; }

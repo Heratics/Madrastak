@@ -133,7 +133,10 @@ export default function ThreeAlamatakPage() {
   const [search, setSearch] = useState('');
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
+  const [syncingCount, setSyncingCount] = useState(0);
+  const syncing = syncingCount > 0;
+  const beginSync = () => setSyncingCount((c) => c + 1);
+  const endSync = () => setSyncingCount((c) => Math.max(0, c - 1));
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [showGradebookForm, setShowGradebookForm] = useState(false);
@@ -265,8 +268,8 @@ export default function ThreeAlamatakPage() {
 
   const handleSaveMarks = async () => {
     if (!activeAssessment) return;
+    beginSync();
     try {
-      setSyncing(true);
       // Filter out calculated marks - they are derived automatically
       const entries = Object.values(marks).filter((m) => !m.is_calculated);
       await threeAlamatakApi.saveMarks(activeAssessment.id, entries);
@@ -277,13 +280,13 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleSaveGradebook = async (payload) => {
+    beginSync();
     try {
-      setSyncing(true);
       if (editingGradebook) {
         const updated = await threeAlamatakApi.updateGradebook(editingGradebook.id, payload);
         notify('Gradebook updated.');
@@ -294,19 +297,22 @@ export default function ThreeAlamatakPage() {
         const created = await threeAlamatakApi.createGradebook(payload);
         notify('Gradebook created.');
         setShowGradebookForm(false);
-        await loadGradebooks(created.id);
+        await loadGradebooks(created.id, 'active');
+        setSelectedId(created.id);
+        setView('workspace');
       }
     } catch (e) {
       setError(e.message);
+      throw e;
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleArchiveGradebook = async (id) => {
     if (!window.confirm('Archive this gradebook? It will be hidden from the active list but can be restored anytime.')) return;
+    beginSync();
     try {
-      setSyncing(true);
       await threeAlamatakApi.archiveGradebook(id);
       notify('Gradebook archived.');
       await loadGradebooks(null, 'active');
@@ -314,13 +320,13 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleRestoreGradebook = async (id) => {
+    beginSync();
     try {
-      setSyncing(true);
       await threeAlamatakApi.restoreGradebook(id);
       notify('Gradebook restored to active.');
       await loadGradebooks(id, 'active');
@@ -328,14 +334,14 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handlePermanentDeleteGradebook = async (id) => {
     if (!window.confirm('PERMANENT DESTRUCTION: This will permanently delete this gradebook and all its students, marks, assessments, and backups. This action CANNOT be undone. Proceed?')) return;
+    beginSync();
     try {
-      setSyncing(true);
       await threeAlamatakApi.permanentlyDeleteGradebook(id);
       notify('Gradebook permanently deleted.');
       await loadGradebooks(null, gradebookTab);
@@ -343,14 +349,14 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleSaveStudent = async (payload) => {
     if (!selectedId) return;
+    beginSync();
     try {
-      setSyncing(true);
       if (editingStudent) {
         await threeAlamatakApi.updateStudent(selectedId, editingStudent.id, payload);
         notify('Student updated.');
@@ -363,15 +369,16 @@ export default function ThreeAlamatakPage() {
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
+      throw e;
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleSaveAssessment = async (payload) => {
     if (!selectedId) return;
+    beginSync();
     try {
-      setSyncing(true);
       if (editingAssessment) {
         await threeAlamatakApi.updateAssessment(editingAssessment.id, payload);
         notify('Assessment updated.');
@@ -385,29 +392,30 @@ export default function ThreeAlamatakPage() {
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
+      throw e;
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleDeleteAssessment = async (id) => {
     if (!window.confirm('Delete this assessment and all its marks?')) return;
+    beginSync();
     try {
-      setSyncing(true);
       await threeAlamatakApi.deleteAssessment(id);
       notify('Assessment deleted.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleSaveScheme = async (payload) => {
     if (!selectedId) return;
+    beginSync();
     try {
-      setSyncing(true);
       if (editingScheme) {
         await threeAlamatakApi.updateScheme(selectedId, editingScheme.id, payload);
         notify('Grading scheme updated.');
@@ -420,29 +428,30 @@ export default function ThreeAlamatakPage() {
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
+      throw e;
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleDeleteScheme = async (schemeId) => {
     if (!window.confirm('Delete this grading scheme?')) return;
+    beginSync();
     try {
-      setSyncing(true);
       await threeAlamatakApi.deleteScheme(selectedId, schemeId);
       notify('Grading scheme deleted.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleSaveRecord = async (payload) => {
     if (!selectedId) return;
+    beginSync();
     try {
-      setSyncing(true);
       if (editingRecord) {
         await threeAlamatakApi.updateHistoricalRecord(editingRecord.id, payload);
         notify('Record updated.');
@@ -455,22 +464,23 @@ export default function ThreeAlamatakPage() {
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
+      throw e;
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleDeleteRecord = async (id) => {
     if (!window.confirm('Delete this record?')) return;
+    beginSync();
     try {
-      setSyncing(true);
       await threeAlamatakApi.deleteHistoricalRecord(id);
       notify('Record deleted.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
@@ -543,23 +553,23 @@ export default function ThreeAlamatakPage() {
 
   const handleValidateBackup = async (fileOrPayload) => {
     if (!selectedId) return;
+    beginSync();
     try {
-      setSyncing(true);
       const validation = await threeAlamatakApi.validateBackup(selectedId, fileOrPayload);
       setRestorePreview({ validation, fileOrPayload });
       notify('Backup validated. Inspect diff before executing replace restore.');
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleExecuteRestore = async () => {
     if (!selectedId || !restorePreview?.fileOrPayload) return;
     if (!window.confirm('REPLACE RESTORE: This will replace all current gradebook data with the backup snapshot. An automatic pre-restore checkpoint will be captured. Continue?')) return;
+    beginSync();
     try {
-      setSyncing(true);
       const res = await threeAlamatakApi.restoreBackup(selectedId, restorePreview.fileOrPayload);
       notify(`Restore successful: ${res.manifest?.marks_restored || 0} marks restored.`);
       setRestorePreview(null);
@@ -567,35 +577,35 @@ export default function ThreeAlamatakPage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleRestoreCheckpoint = async (checkpointId) => {
     if (!window.confirm('Rollback to this recovery checkpoint? Current state will be snapshotted first.')) return;
+    beginSync();
     try {
-      setSyncing(true);
       await threeAlamatakApi.restoreCheckpoint(selectedId, checkpointId);
       notify('Gradebook successfully restored from recovery checkpoint.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
   const handleDeleteCheckpoint = async (checkpointId) => {
     if (!window.confirm('Delete this recovery checkpoint?')) return;
+    beginSync();
     try {
-      setSyncing(true);
       await threeAlamatakApi.deleteCheckpoint(selectedId, checkpointId);
       notify('Checkpoint deleted.');
       await loadGradebook(selectedId);
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      endSync();
     }
   };
 
@@ -3637,6 +3647,9 @@ function AssessmentForm({ assessment, onCancel, onSubmit }) {
         }
   );
 
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+
   // Live validation & max score computation
   const validation = useMemo(() => {
     return validateComponentDefinitions(form.components);
@@ -3687,29 +3700,41 @@ function AssessmentForm({ assessment, onCancel, onSubmit }) {
     updateComponent(compIndex, { source_component_ids: nextIds });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e?.preventDefault();
     if (!form.title.trim()) {
-      alert('Please enter an assessment title.');
+      setFormError('Please enter an assessment title.');
       return;
     }
     if (!validation.valid) {
-      alert(`Please fix calculation errors:\n${validation.errors.join('\n')}`);
+      setFormError(`Please fix calculation errors:\n${validation.errors.join('\n')}`);
       return;
     }
-    onSubmit({
-      ...form,
-      components: validation.components,
-    });
+    setFormError('');
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        ...form,
+        components: validation.components,
+      });
+    } catch (err) {
+      setFormError(err?.message || 'Failed to save assessment.');
+      setSubmitting(false);
+    }
   };
 
   return (
     <Modal title={assessment ? 'Edit Assessment' : 'New Assessment'} onCancel={onCancel}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="Assessment Title" value={form.title} onChange={(val) => setForm({ ...form, title: val })} placeholder="e.g. Midterm Exam" />
+        {formError && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700 whitespace-pre-line">
+            {formError}
+          </div>
+        )}
+        <Field label="Assessment Title" value={form.title} onChange={(val) => setForm({ ...form, title: val })} placeholder="e.g. Midterm Exam" disabled={submitting} />
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Strand / Category" value={form.strand} onChange={(val) => setForm({ ...form, strand: val })} />
-          <Field label="Date" type="date" value={form.assessment_date} onChange={(val) => setForm({ ...form, assessment_date: val })} />
+          <Field label="Strand / Category" value={form.strand} onChange={(val) => setForm({ ...form, strand: val })} disabled={submitting} />
+          <Field label="Date" type="date" value={form.assessment_date} onChange={(val) => setForm({ ...form, assessment_date: val })} disabled={submitting} />
         </div>
 
         {/* Components List */}
@@ -3832,7 +3857,7 @@ function AssessmentForm({ assessment, onCancel, onSubmit }) {
           </div>
         )}
 
-        <FormActions onCancel={onCancel} onSubmit={handleSubmit} label={assessment ? 'Save Assessment' : 'Create Assessment'} />
+        <FormActions onCancel={onCancel} label={assessment ? 'Save Assessment' : 'Create Assessment'} loading={submitting} />
       </form>
     </Modal>
   );
@@ -4448,24 +4473,41 @@ function GradebookForm({ gradebook, onCancel, onSubmit }) {
   const [subject, setSubject] = useState(gradebook?.subject || 'ESL');
   const [className, setClassName] = useState(gradebook?.class_name || 'Year 9');
   const [description, setDescription] = useState(gradebook?.description || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!title.trim()) {
+      setError('Gradebook title is required.');
+      return;
+    }
+    setError('');
+    setSubmitting(true);
+    try {
+      await onSubmit({ title: title.trim(), academic_year: academicYear, subject, class_name: className, description });
+    } catch (err) {
+      setError(err?.message || 'Failed to save gradebook.');
+      setSubmitting(false);
+    }
+  };
 
   return (
     <Modal title={gradebook ? 'Edit Gradebook' : 'Create Gradebook'} onCancel={onCancel}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSubmit({ title, academic_year: academicYear, subject, class_name: className, description });
-        }}
-        className="space-y-4"
-      >
-        <Field label="Gradebook Title" value={title} onChange={setTitle} placeholder="e.g. Year 9 ESL" />
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">
+            {error}
+          </div>
+        )}
+        <Field label="Gradebook Title" value={title} onChange={setTitle} placeholder="e.g. Year 9 ESL" disabled={submitting} />
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Academic Year" value={academicYear} onChange={setAcademicYear} />
-          <Field label="Subject" value={subject} onChange={setSubject} />
+          <Field label="Academic Year" value={academicYear} onChange={setAcademicYear} disabled={submitting} />
+          <Field label="Subject" value={subject} onChange={setSubject} disabled={submitting} />
         </div>
-        <Field label="Class Section" value={className} onChange={setClassName} />
-        <Field label="Description (Optional)" value={description} onChange={setDescription} />
-        <FormActions onCancel={onCancel} label={gradebook ? 'Save Changes' : 'Create Gradebook'} />
+        <Field label="Class Section" value={className} onChange={setClassName} disabled={submitting} />
+        <Field label="Description (Optional)" value={description} onChange={setDescription} disabled={submitting} />
+        <FormActions onCancel={onCancel} label={gradebook ? 'Save Changes' : 'Create Gradebook'} loading={submitting} />
       </form>
     </Modal>
   );
@@ -4474,19 +4516,36 @@ function GradebookForm({ gradebook, onCancel, onSubmit }) {
 function StudentForm({ student, onCancel, onSubmit }) {
   const [name, setName] = useState(student?.display_name || '');
   const [externalId, setExternalId] = useState(student?.external_student_id || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!name.trim()) {
+      setError('Student name is required.');
+      return;
+    }
+    setError('');
+    setSubmitting(true);
+    try {
+      await onSubmit({ display_name: name.trim(), external_student_id: externalId.trim() || null });
+    } catch (err) {
+      setError(err?.message || 'Failed to save student.');
+      setSubmitting(false);
+    }
+  };
 
   return (
     <Modal title={student ? 'Edit Student' : 'Add Student'} onCancel={onCancel}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSubmit({ display_name: name, external_student_id: externalId });
-        }}
-        className="space-y-4"
-      >
-        <Field label="Full Name" value={name} onChange={setName} placeholder="Student Name" />
-        <Field label="Student ID (Optional)" value={externalId} onChange={setExternalId} />
-        <FormActions onCancel={onCancel} label={student ? 'Save Changes' : 'Add Student'} />
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">
+            {error}
+          </div>
+        )}
+        <Field label="Full Name" value={name} onChange={setName} placeholder="Student Name" disabled={submitting} />
+        <Field label="Student ID (Optional)" value={externalId} onChange={setExternalId} disabled={submitting} />
+        <FormActions onCancel={onCancel} label={student ? 'Save Changes' : 'Add Student'} loading={submitting} />
       </form>
     </Modal>
   );
@@ -4494,18 +4553,35 @@ function StudentForm({ student, onCancel, onSubmit }) {
 
 function SchemeForm({ scheme, onCancel, onSubmit }) {
   const [name, setName] = useState(scheme?.name || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!name.trim()) {
+      setError('Scheme name is required.');
+      return;
+    }
+    setError('');
+    setSubmitting(true);
+    try {
+      await onSubmit({ name: name.trim() });
+    } catch (err) {
+      setError(err?.message || 'Failed to save grading scheme.');
+      setSubmitting(false);
+    }
+  };
 
   return (
     <Modal title={scheme ? 'Edit Grading Scheme' : 'New Grading Scheme'} onCancel={onCancel}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSubmit({ name });
-        }}
-        className="space-y-4"
-      >
-        <Field label="Scheme Name" value={name} onChange={setName} placeholder="e.g. Cambridge IGCSE Boundaries" />
-        <FormActions onCancel={onCancel} label={scheme ? 'Save Scheme' : 'Create Scheme'} />
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">
+            {error}
+          </div>
+        )}
+        <Field label="Scheme Name" value={name} onChange={setName} placeholder="e.g. Cambridge IGCSE Boundaries" disabled={submitting} />
+        <FormActions onCancel={onCancel} label={scheme ? 'Save Scheme' : 'Create Scheme'} loading={submitting} />
       </form>
     </Modal>
   );
@@ -4515,22 +4591,36 @@ function RecordForm({ record, students, onCancel, onSubmit }) {
   const [recordType, setRecordType] = useState(record?.record_type || 'behavior');
   const [studentId, setStudentId] = useState(record?.student_id || '');
   const [notes, setNotes] = useState(record?.payload?.notes || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      await onSubmit({ record_type: recordType, student_id: studentId || null, payload: { notes } });
+    } catch (err) {
+      setError(err?.message || 'Failed to save record.');
+      setSubmitting(false);
+    }
+  };
 
   return (
     <Modal title={record ? 'Edit Record' : 'Add Record'} onCancel={onCancel}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSubmit({ record_type: recordType, student_id: studentId || null, payload: { notes } });
-        }}
-        className="space-y-4"
-      >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">
+            {error}
+          </div>
+        )}
         <div>
           <label className="text-xs font-bold text-slate-500">Record Type</label>
           <select
             value={recordType}
             onChange={(e) => setRecordType(e.target.value)}
-            className="mt-1 min-h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold"
+            disabled={submitting}
+            className="mt-1 min-h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold disabled:bg-slate-50"
           >
             <option value="behavior">Behavior / Conduct</option>
             <option value="submission">Assignment Submission</option>
@@ -4542,7 +4632,8 @@ function RecordForm({ record, students, onCancel, onSubmit }) {
           <select
             value={studentId}
             onChange={(e) => setStudentId(e.target.value)}
-            className="mt-1 min-h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold"
+            disabled={submitting}
+            className="mt-1 min-h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold disabled:bg-slate-50"
           >
             <option value="">General (No specific student)</option>
             {students.map((st) => (
@@ -4552,8 +4643,8 @@ function RecordForm({ record, students, onCancel, onSubmit }) {
             ))}
           </select>
         </div>
-        <Field label="Notes / Content" value={notes} onChange={setNotes} />
-        <FormActions onCancel={onCancel} label={record ? 'Save Changes' : 'Create Record'} />
+        <Field label="Notes / Content" value={notes} onChange={setNotes} disabled={submitting} />
+        <FormActions onCancel={onCancel} label={record ? 'Save Changes' : 'Create Record'} loading={submitting} />
       </form>
     </Modal>
   );
@@ -4575,37 +4666,41 @@ function Modal({ title, children, onCancel }) {
   );
 }
 
-function Field({ label, value, onChange, placeholder = '', type = 'text' }) {
+function Field({ label, value, onChange, placeholder = '', type = 'text', disabled = false }) {
   return (
     <div>
-      <label className="text-xs font-bold text-slate-500">{label}</label>
+      {label && <label className="text-xs font-bold text-slate-500">{label}</label>}
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 shadow-xs focus:ring-2 focus:ring-teal-500"
+        disabled={disabled}
+        className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 shadow-xs focus:ring-2 focus:ring-teal-500 disabled:bg-slate-50 disabled:text-slate-400"
       />
     </div>
   );
 }
 
-function FormActions({ onCancel, onSubmit, label = 'Submit' }) {
+function FormActions({ onCancel, onSubmit, label = 'Submit', loading = false, disabled = false, loadingLabel = 'Saving...' }) {
   return (
     <div className="flex items-center justify-end gap-2 border-t pt-4">
       <button
         type="button"
         onClick={onCancel}
-        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+        disabled={loading || disabled}
+        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
       >
         Cancel
       </button>
       <button
-        type="button"
+        type={onSubmit ? 'button' : 'submit'}
         onClick={onSubmit}
-        className="rounded-xl bg-teal-700 px-4 py-2 text-xs font-bold text-white hover:bg-teal-600 shadow-sm"
+        disabled={loading || disabled}
+        className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-xs font-bold text-white hover:bg-teal-600 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {label}
+        {loading && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+        <span>{loading ? loadingLabel : label}</span>
       </button>
     </div>
   );
